@@ -1,0 +1,27 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# CodeCarbon output
+emissions.csv
+
+# Local application data
+data/*.db
+data/faiss_index/
+data/*.faiss
+data/*.npy
+data/*_metadata.json
+
+# HuggingFace & Torch cache
+.cache/
+
+# OS specific
+Thumbs.db
+.DS_Store

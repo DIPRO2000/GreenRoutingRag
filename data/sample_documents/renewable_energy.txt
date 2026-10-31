@@ -1,0 +1,10 @@
+# Overview of Renewable Energy Systems and Photovoltaic Technologies
+
+## Solar Photovoltaic Generation
+Solar photovoltaic (PV) technology directly converts photons into electrical current using semiconductor materials, primarily crystalline silicon. Modern commercial monocrystalline silicon solar cells achieve energy conversion efficiencies between 20% and 24%. Emerging multi-junction perovskite-silicon tandem cells demonstrate theoretical lab efficiencies exceeding 30%.
+
+## Environmental Life-Cycle Assessment
+While photovoltaic panels produce zero operational carbon emissions during electricity generation, their manufacturing and supply-chain processing (silicon refining, quartz reduction, and high-temperature wafer slicing) incur embodied carbon. The energy payback time (EPBT) of modern PV systems ranges from 0.8 to 1.5 years depending on local solar irradiance, after which they provide net positive clean energy for their remaining 25 to 30 year lifespan.
+
+## Wind Energy Systems
+Horizontal-axis wind turbines convert kinetic aerodynamic force into rotational mechanical torque, driving synchronous induction generators. Large offshore installations reach individual turbine capacities of 15 megawatts (MW) with capacity factors approaching 50%. The primary engineering challenge lies in grid frequency stabilization and integration with battery energy storage systems (BESS).

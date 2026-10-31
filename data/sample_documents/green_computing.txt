@@ -1,0 +1,20 @@
+# Green Computing and Energy-Aware AI Systems
+
+## Executive Summary
+As artificial intelligence models grow exponentially in parameter scale, their operational electricity consumption and embodied carbon footprint have emerged as critical challenges in computer science. Modern large language models (LLMs) with tens or hundreds of billions of parameters require significant kilowatt-hour (kWh) expenditures per thousand tokens generated.
+
+## The GreenRouting Framework Architecture
+GreenRouting is an energy-aware retrieval-augmented generation (RAG) framework developed to minimize unnecessary inference compute without degrading factual groundedness or answer quality. The system integrates two foundational energy-reduction paradigms:
+
+1. Adaptive Green Model Routing: Instead of dispatching every prompt to a heavyweight, power-intensive LLM, GreenRouting dynamically estimates query complexity using syntactic, lexical, and semantic heuristics. Queries with low structural complexity and direct factual inquiries are routed to lightweight models (such as Qwen 2.5 0.5B or Llama 3.2 1B), which operate at approximately 25 to 35 Watts TDP. Queries demanding multi-hop reasoning, comparative synthesis, or technical depth are routed to capable models (such as Llama 3.2 3B or Mistral 7B) running at 75 to 95 Watts TDP.
+
+2. Quality-Aware Semantic Caching: Recomputing identical or semantically equivalent questions constitutes a major source of computational waste in document question-answering systems. GreenRouting deploys a semantic caching layer with SQLite persistence and cosine similarity search. Crucially, GreenRouting enforces a multi-layer validation protocol before accepting a cache hit:
+   - Document Context Compatibility: Verifies that the cached answer originated from the active document corpus.
+   - Source Support Alignment: Validates that claims in the cached answer are corroborated by currently retrieved chunks.
+   - Staleness and Freshness Check: Rejects entries exceeding maximum age limits.
+   - Grounding Quality Guard: Ensures cached responses satisfy strict factual grounding thresholds.
+
+## Energy and Carbon Accounting
+The carbon footprint of LLM inference is governed by:
+Emissions (kg CO2eq) = Energy (kWh) * Carbon Intensity Factor (kg CO2/kWh).
+Through the combination of semantic cache reuse (yielding near-zero inference energy) and adaptive model routing, GreenRouting demonstrates substantial reductions in both energy consumption and average response latency compared to static monolithic RAG pipelines.

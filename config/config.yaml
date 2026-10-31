@@ -1,0 +1,56 @@
+# GreenRouting Configuration
+
+app:
+  name: "GreenRouting"
+  version: "1.0.0"
+  description: "An Energy-Aware RAG Framework with Adaptive Model Routing and Quality-Aware Caching"
+  data_dir: "data"
+  db_path: "data/greenrouting.db"
+  faiss_index_dir: "data/faiss_index"
+
+models:
+  ollama_base_url: "http://localhost:11434"
+  # Default lightweight model for low complexity queries
+  lightweight_model: "qwen2.5:0.5b"
+  # Capable model for complex queries or retry fallback
+  capable_model: "llama3.2:3b"
+  # Embedding model
+  embedding_model: "all-MiniLM-L6-v2"
+  # Simulation fallback when Ollama is offline
+  enable_simulation_fallback: true
+
+rag:
+  chunk_size: 500
+  chunk_overlap: 50
+  top_k_retrieval: 3
+  similarity_metric: "cosine"
+
+routing:
+  complexity_threshold: 0.50
+  # Factors for complexity calculation
+  weights:
+    length: 0.20
+    reasoning_keywords: 0.35
+    syntactic_complexity: 0.25
+    domain_depth: 0.20
+  # Retry policy if lightweight answer has low quality
+  enable_retry_on_low_quality: true
+  min_acceptable_quality_score: 0.55
+
+caching:
+  enabled: true
+  # Similarity threshold for semantic cache hit
+  semantic_similarity_threshold: 0.88
+  # Quality-aware validation options
+  enforce_document_context_match: true
+  min_cache_grounding_score: 0.60
+  max_cache_age_hours: 72
+
+energy:
+  tracking_mode: "auto" # "auto", "codecarbon", or "modeled"
+  country_iso_code: "IND"
+  offline_mode: true
+  # Fallback TDP wattage assumptions for CPU/GPU if direct sensor unavailable
+  cpu_tdp_watts: 45.0
+  gpu_tdp_watts: 75.0
+  emission_factor_kg_per_kwh: 0.708 # Grid average emission factor (kg CO2 / kWh)

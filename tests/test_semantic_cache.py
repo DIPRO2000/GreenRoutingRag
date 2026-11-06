@@ -1,6 +1,7 @@
 """
 Unit tests for Semantic Cache integration in GreenRouting.
 """
+import numpy as np
 import pytest
 from pathlib import Path
 from greenrouting.config import CachingConfig
@@ -58,3 +59,54 @@ def test_semantic_cache_hit_and_miss(cache_system):
     )
     assert lookup_miss["status"] == CacheValidationStatus.MISS
     assert lookup_miss["cached_answer"] is None
+
+
+def test_cache_tries_next_candidate_when_best_candidate_is_invalid(cache_system, monkeypatch):
+    cache, _ = cache_system
+
+    # Give each question a controlled embedding so the similarity
+    # scores are predictable.
+    embeddings = {
+        "wrong document question": np.array([1.0, 0.0], dtype=np.float32),
+        "valid document question": np.array([0.95, 0.31225], dtype=np.float32),
+        "new user question": np.array([1.0, 0.0], dtype=np.float32)
+    }
+
+    def fake_embed_query(query):
+        return embeddings[query]
+
+    monkeypatch.setattr(
+        cache.embedding_service,
+        "embed_query",
+        fake_embed_query
+    )
+
+    # Store the highest-similarity answer, but from the wrong document.
+    cache.store(
+        query="wrong document question",
+        answer="This answer belongs to another document.",
+        source_doc_ids=["doc_wrong"],
+        source_chunks=[],
+        model_used="test-model",
+        grounding_score=0.95
+    )
+
+    # Store a slightly less similar answer from the correct document.
+    cache.store(
+        query="valid document question",
+        answer="This is the correct solar energy answer.",
+        source_doc_ids=["doc_valid"],
+        source_chunks=[],
+        model_used="test-model",
+        grounding_score=0.95
+    )
+
+    # Search using the correct document context.
+    result = cache.lookup(
+        query="new user question",
+        current_doc_ids=["doc_valid"]
+    )
+
+    # The cache should reject the first candidate and try the second.
+    assert result["status"] == CacheValidationStatus.HIT_VALID
+    assert result["cached_answer"] == "This is the correct solar energy answer."

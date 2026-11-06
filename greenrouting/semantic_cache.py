@@ -58,65 +58,106 @@ class SemanticCache:
                 "validation_reason": "Semantic cache is empty.",
                 "candidate": None
             }
-
-        # Embed input query
+        # Embed the input query
         query_vec = self.embedding_service.embed_query(query)
         q_norm = np.linalg.norm(query_vec)
+
         if q_norm > 1e-9:
             query_vec = query_vec / q_norm
 
+        # Calculate similarity with every cached entry
+        candidates = []
         best_score = -1.0
-        best_entry = None
 
         for entry in entries:
             emb_list = entry.get("query_embedding")
+
             if not emb_list:
                 continue
+
             cached_vec = np.array(emb_list, dtype=np.float32)
+
+            # Skip embeddings with incompatible dimensions
+            if cached_vec.shape != query_vec.shape:
+                continue
+
             c_norm = np.linalg.norm(cached_vec)
+
             if c_norm > 1e-9:
                 cached_vec = cached_vec / c_norm
 
             sim = float(np.dot(query_vec, cached_vec))
-            if sim > best_score:
-                best_score = sim
-                best_entry = entry
 
-        if not best_entry or best_score < self.config.semantic_similarity_threshold:
+            best_score = max(best_score, sim)
+
+            # Keep only candidates above the similarity threshold
+            if sim >= self.config.semantic_similarity_threshold:
+                candidates.append((sim, entry))
+
+        # No sufficiently similar candidate was found
+        if not candidates:
             return {
                 "status": CacheValidationStatus.MISS,
                 "cached_answer": None,
                 "similarity_score": round(max(0.0, best_score), 4),
-                "validation_reason": f"No semantically similar query found (Best similarity: {max(0.0, best_score):.3f} < threshold {self.config.semantic_similarity_threshold:.3f}).",
+                "validation_reason": (
+                    f"No semantically similar query found "
+                    f"(Best similarity: {max(0.0, best_score):.3f} "
+                    f"< threshold "
+                    f"{self.config.semantic_similarity_threshold:.3f})."
+                ),
                 "candidate": None
             }
 
-        # Rigorous Quality & Context Validation
-        is_valid, status_code, reason = self.validator.validate_cache_candidate(
-            candidate_entry=best_entry,
-            similarity_score=best_score,
-            current_doc_ids=current_doc_ids,
-            retrieved_chunks=retrieved_chunks
-        )
+        # Try candidates from highest to lowest similarity
+        candidates.sort(key=lambda item: item[0], reverse=True)
 
-        if is_valid:
-            # Update access count and timestamp in persistent storage
-            self.db.update_cache_access(best_entry["cache_id"])
-            return {
-                "status": CacheValidationStatus.HIT_VALID,
-                "cached_answer": best_entry["answer_text"],
-                "similarity_score": round(best_score, 4),
-                "validation_reason": reason,
-                "candidate": best_entry
-            }
-        else:
-            return {
-                "status": status_code,
-                "cached_answer": None,
-                "similarity_score": round(best_score, 4),
-                "validation_reason": reason,
-                "candidate": best_entry
-            }
+        best_rejected = None
+
+        for similarity, candidate in candidates:
+
+            # Validate document context, freshness and answer quality
+            is_valid, status_code, reason = (
+                self.validator.validate_cache_candidate(
+                    candidate_entry=candidate,
+                    similarity_score=similarity,
+                    current_doc_ids=current_doc_ids,
+                    retrieved_chunks=retrieved_chunks
+                )
+            )
+
+            if is_valid:
+                # Update access count only for a valid cache hit
+                self.db.update_cache_access(candidate["cache_id"])
+
+                return {
+                    "status": CacheValidationStatus.HIT_VALID,
+                    "cached_answer": candidate["answer_text"],
+                    "similarity_score": round(similarity, 4),
+                    "validation_reason": reason,
+                    "candidate": candidate
+                }
+
+            # Remember the highest-similarity rejected candidate
+            if best_rejected is None:
+                best_rejected = {
+                    "status": status_code,
+                    "similarity_score": similarity,
+                    "validation_reason": reason,
+                    "candidate": candidate
+                }
+
+        # Similar candidates existed, but all failed validation
+        return {
+            "status": best_rejected["status"],
+            "cached_answer": None,
+            "similarity_score": round(
+                best_rejected["similarity_score"], 4
+            ),
+            "validation_reason": best_rejected["validation_reason"],
+            "candidate": best_rejected["candidate"]
+        }
+
 
     def store(
         self,

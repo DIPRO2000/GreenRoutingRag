@@ -139,6 +139,22 @@ class DatabaseManager:
             cursor.execute("SELECT * FROM documents ORDER BY uploaded_at DESC")
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_document_by_hash(self, doc_hash: str) -> Optional[Dict[str, Any]]:
+        """Return the first indexed document with this content hash, if any."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM documents
+                WHERE doc_hash = ?
+                ORDER BY uploaded_at ASC, rowid ASC
+                LIMIT 1
+                """,
+                (doc_hash,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def delete_document(self, doc_id: str) -> None:
         with self.get_connection() as conn:
             conn.execute("DELETE FROM document_chunks WHERE doc_id = ?", (doc_id,))

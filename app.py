@@ -256,7 +256,16 @@ with tab_docs:
                 file_bytes = uploaded_file.read()
                 try:
                     res = orchestrator.process_and_index_document(uploaded_file.name, file_bytes)
-                    st.success(f"Indexed `{uploaded_file.name}` ({res['total_chunks']} chunks, {res['total_characters']} characters)")
+                    if res.get("duplicate"):
+                        st.info(
+                            f"`{uploaded_file.name}` is already indexed as "
+                            f"`{res['filename']}`; duplicate upload skipped."
+                        )
+                    else:
+                        st.success(
+                            f"Indexed `{uploaded_file.name}` "
+                            f"({res['total_chunks']} chunks, {res['total_characters']} characters)"
+                        )
                 except Exception as e:
                     st.error(f"Error processing `{uploaded_file.name}`: {e}")
                 progress.progress((idx + 1) / len(uploaded_files))

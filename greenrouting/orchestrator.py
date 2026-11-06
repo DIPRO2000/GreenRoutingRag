@@ -65,6 +65,21 @@ class GreenRoutingOrchestrator:
     def process_and_index_document(self, filename: str, file_bytes: bytes) -> Dict[str, Any]:
         """Process an uploaded document, chunk it, embed it, and store metadata in SQLite & FAISS."""
         doc_meta, chunks = self.doc_processor.process_document(filename, file_bytes)
+
+        existing = self.db.get_document_by_hash(doc_meta["doc_hash"])
+        if existing:
+            logger.info(
+                "Skipping duplicate document '%s'; already indexed as '%s'.",
+                filename,
+                existing["filename"],
+            )
+            return {
+                "doc_id": existing["doc_id"],
+                "filename": existing["filename"],
+                "total_chunks": existing["total_chunks"],
+                "total_characters": existing["total_characters"],
+                "duplicate": True,
+            }
         
         # Save to SQLite
         self.db.save_document(
@@ -84,7 +99,8 @@ class GreenRoutingOrchestrator:
             "doc_id": doc_meta["doc_id"],
             "filename": doc_meta["filename"],
             "total_chunks": doc_meta["total_chunks"],
-            "total_characters": doc_meta["total_characters"]
+            "total_characters": doc_meta["total_characters"],
+            "duplicate": False,
         }
 
     def execute_query(

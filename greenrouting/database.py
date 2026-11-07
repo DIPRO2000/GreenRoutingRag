@@ -139,6 +139,19 @@ class DatabaseManager:
             cursor.execute("SELECT * FROM documents ORDER BY uploaded_at DESC")
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_all_chunks(self) -> List[Dict[str, Any]]:
+        """Return all persisted chunks in stable document/chunk order."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT chunk_id, doc_id, chunk_index, text_content, page_number, character_count
+                FROM document_chunks
+                ORDER BY doc_id, chunk_index
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_document_by_hash(self, doc_hash: str) -> Optional[Dict[str, Any]]:
         """Return the first indexed document with this content hash, if any."""
         with self.get_connection() as conn:
@@ -155,11 +168,33 @@ class DatabaseManager:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def delete_document(self, doc_id: str) -> None:
+    def delete_document(self, doc_id: str) -> Dict[str, int]:
         with self.get_connection() as conn:
-            conn.execute("DELETE FROM document_chunks WHERE doc_id = ?", (doc_id,))
-            conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM document_chunks WHERE doc_id = ?", (doc_id,))
+            removed_chunk_count = int(cursor.fetchone()[0])
+
+            cursor.execute("SELECT cache_id, source_doc_ids FROM semantic_cache WHERE is_active = 1")
+            invalidated_cache_count = 0
+            for cache_id, source_doc_ids_json in cursor.fetchall():
+                try:
+                    source_doc_ids = json.loads(source_doc_ids_json)
+                except (TypeError, json.JSONDecodeError):
+                    source_doc_ids = []
+                if doc_id in source_doc_ids:
+                    cursor.execute(
+                        "UPDATE semantic_cache SET is_active = 0 WHERE cache_id = ?",
+                        (cache_id,),
+                    )
+                    invalidated_cache_count += 1
+
+            cursor.execute("DELETE FROM document_chunks WHERE doc_id = ?", (doc_id,))
+            cursor.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
             conn.commit()
+            return {
+                "removed_chunk_count": removed_chunk_count,
+                "invalidated_cache_count": invalidated_cache_count,
+            }
 
     # --- Semantic Cache helpers ---
     def insert_cache_entry(self, cache_id: str, query_text: str, query_embedding: List[float],

@@ -1,13 +1,16 @@
 # Virtual environments
 .venv/
+.env
 venv/
 ENV/
+
 
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+*.pyc
 
 # CodeCarbon output
 emissions.csv

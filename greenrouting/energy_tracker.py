@@ -4,7 +4,8 @@ Integrates CodeCarbon with transparent differentiation between direct hardware r
 modeled TDP estimations, and cache-hit zero-inference savings.
 """
 import logging
-from typing import Dict, Any, Optional
+import math
+from typing import Dict, Any, Optional, List
 from greenrouting.config import EnergyConfig
 
 logger = logging.getLogger(__name__)
@@ -40,13 +41,31 @@ class EnergyTracker:
         except Exception:
             self.hardware_sensors_available = False
 
+    def _estimate_model_power(self, model_name: Optional[str]) -> float:
+        """Return the configured TDP-based power estimate for a model."""
+
+        m_lower = (model_name or "").lower()
+
+        if any(tag in m_lower for tag in ["0.5b", "1b", "tiny", "mini"]):
+            return self.config.cpu_tdp_watts * 0.60
+
+        elif any(tag in m_lower for tag in ["3b", "7b", "mistral", "llama"]):
+            return (
+                self.config.cpu_tdp_watts
+                + self.config.gpu_tdp_watts * 0.65
+            )
+
+        return self.config.cpu_tdp_watts
+
+
     def track_operation(
         self,
         operation_name: str,
         latency_seconds: float,
         model_name: Optional[str] = None,
         is_cache_hit: bool = False,
-        retry_count: int = 0
+        retry_count: int = 0,
+        generation_runs: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Compute energy (kWh) and emissions (kg CO2eq) for a given operation.
@@ -76,42 +95,84 @@ class EnergyTracker:
         # 2. Query-level Calibrated TDP Engineering Model
         # Formula: E (kWh) = [Power (Watts) * Time (Seconds)] / (3600 * 1000)
         # Emissions (kg CO2eq) = E (kWh) * Emission Factor (kg/kWh)
-        m_lower = (model_name or "").lower()
-        if any(tag in m_lower for tag in ["0.5b", "1b", "tiny", "mini"]):
-            # Lightweight model utilizes lower CPU/GPU thread allocation
-            base_power_watts = self.config.cpu_tdp_watts * 0.60  # e.g., ~27W
-        elif any(tag in m_lower for tag in ["3b", "7b", "mistral", "llama"]):
-            # Capable model utilizes higher compute cores and VRAM bandwidth
-            base_power_watts = self.config.cpu_tdp_watts + (self.config.gpu_tdp_watts * 0.65)  # e.g., ~93W
+
+        # 2. Model-specific TDP energy estimation [Changed]
+
+        generation_details = []
+
+        if generation_runs:
+            # Calculate energy separately for every model generation.
+            for run in generation_runs:
+
+                run_model = run.get("model_name")
+                run_latency = float(run.get("latency_seconds", 0.0))
+
+                if not math.isfinite(run_latency) or run_latency < 0:
+                    raise ValueError(
+                        "Generation latency must be finite and non-negative."
+                    )
+
+                if run_latency == 0:
+                    continue
+
+                run_power = self._estimate_model_power(run_model)
+
+                generation_details.append({
+                    "model_name": run_model,
+                    "latency_seconds": run_latency,
+                    "power_watts": run_power,
+                    "energy_kwh": (
+                        run_power * run_latency / (3600.0 * 1000.0)
+                    )
+                })
+
+            if not generation_details:
+                raise ValueError("No valid generation records provided.")
+
+            energy_kwh = sum(
+                item["energy_kwh"] for item in generation_details
+            )
+
+            total_generation_latency = sum(
+                item["latency_seconds"] for item in generation_details
+            )
+
+            total_power_watts = (
+                energy_kwh * 3600.0 * 1000.0
+                / total_generation_latency
+            )
+
+            lat = total_generation_latency
+
         else:
-            base_power_watts = self.config.cpu_tdp_watts
+            # Backward-compatible single-model calculation.
+            total_power_watts = self._estimate_model_power(model_name)
 
-        # Account for retry: an escalation rerun incurs power for both passes
-        total_power_watts = base_power_watts
-        effective_duration = lat * (1.0 + 0.40 * retry_count)
-        energy_kwh = (total_power_watts * effective_duration) / (3600.0 * 1000.0)
+            energy_kwh = (
+                total_power_watts * lat / (3600.0 * 1000.0)
+            )
 
-        emissions_kg = energy_kwh * self.config.emission_factor_kg_per_kwh
+        emissions_kg = (
+            energy_kwh * self.config.emission_factor_kg_per_kwh
+        )
 
-        measurement_type = (
-            EnergyMeasurementType.DIRECT_HARDWARE
-            if self.hardware_sensors_available
-            else EnergyMeasurementType.MODELED_TDP_ESTIMATE
+        measurement_type = EnergyMeasurementType.MODELED_TDP_ESTIMATE
+
+        details = (
+            f"Modeled TDP estimate using {len(generation_details) if generation_runs else 1} "
+            f"generation(s), with total energy {energy_kwh:.8f} kWh "
+            f"and grid emission factor "
+            f"{self.config.emission_factor_kg_per_kwh} kg CO2/kWh."
         )
 
         return {
-            "energy_kwh": round(energy_kwh, 8),
-            "emissions_kg": round(emissions_kg, 8),
+            "energy_kwh": energy_kwh,
+            "emissions_kg":emissions_kg,
             "emissions_g": round(emissions_kg * 1000.0, 5),
             "latency_seconds": round(lat, 4),
             "measurement_type": measurement_type,
-            "is_direct_measurement": self.hardware_sensors_available,
-            "measurement_label": (
-                "Direct Hardware Sensor" if self.hardware_sensors_available
-                else "Modeled TDP Estimate"
-            ),
-            "details": (
-                f"Modeled using {total_power_watts:.1f}W TDP power profile over {lat:.2f}s latency "
-                f"with grid emission factor of {self.config.emission_factor_kg_per_kwh} kg CO2/kWh."
-            )
+            "is_direct_measurement": False,
+            "measurement_label": "Modeled TDP Estimate",
+            "generation_details": generation_details,
+            "details": details
         }

@@ -110,3 +110,115 @@ def test_cache_tries_next_candidate_when_best_candidate_is_invalid(cache_system,
     # The cache should reject the first candidate and try the second.
     assert result["status"] == CacheValidationStatus.HIT_VALID
     assert result["cached_answer"] == "This is the correct solar energy answer."
+def test_semantic_cache_disabled(cache_system):
+    cache, db = cache_system
+
+    # Create a cache with caching disabled
+    disabled_cache = SemanticCache(
+        db_manager=db,
+        embedding_service=cache.embedding_service,
+        caching_config=CachingConfig(enabled=False)
+    )
+
+    # Lookup should return MISS
+    result = disabled_cache.lookup(
+        query="What is green computing?"
+    )
+
+    assert result["status"] == CacheValidationStatus.MISS
+    assert result["cached_answer"] is None
+
+    # Storing an answer should be skipped
+    cache_id = disabled_cache.store(
+        query="What is green computing?",
+        answer="Green computing reduces environmental impact.",
+        source_doc_ids=["doc_green"],
+        source_chunks=[],
+        model_used="test-model",
+        grounding_score=0.95
+    )
+
+    assert cache_id is None
+
+    # Database should remain empty
+    assert db.get_active_cache_entries() == []
+
+def test_cache_access_count_increases_on_valid_hit(cache_system):
+    cache, db = cache_system
+
+    # Store an answer
+    cache.store(
+        query="What is green computing?",
+        answer="Green computing reduces environmental impact.",
+        source_doc_ids=["doc_green"],
+        source_chunks=[],
+        model_used="test-model",
+        grounding_score=0.95
+    )
+
+    # Initially, access count should be 1
+    entries = db.get_active_cache_entries()
+    assert entries[0]["access_count"] == 1
+
+    # First successful lookup
+    result = cache.lookup(
+        query="What is green computing?",
+        current_doc_ids=["doc_green"]
+    )
+
+    assert result["status"] == CacheValidationStatus.HIT_VALID
+
+    # Access count should now be 2
+    entries = db.get_active_cache_entries()
+    assert entries[0]["access_count"] == 2
+
+    # Second successful lookup
+    cache.lookup(
+        query="What is green computing?",
+        current_doc_ids=["doc_green"]
+    )
+
+    # Access count should now be 3
+    entries = db.get_active_cache_entries()
+    assert entries[0]["access_count"] == 3
+
+def test_cache_persistence_after_reinitialization(tmp_path):
+    db_path = tmp_path / "persistent_cache.db"
+
+    # Create the first cache instance
+    db1 = DatabaseManager(db_path)
+    embedding_service = EmbeddingService()
+    config = CachingConfig()
+
+    cache1 = SemanticCache(db1, embedding_service, config)
+
+    # Store an answer
+    cache1.store(
+        query="What is green computing?",
+        answer="Green computing reduces environmental impact.",
+        source_doc_ids=["doc_green"],
+        source_chunks=[],
+        model_used="test-model",
+        grounding_score=0.95
+    )
+
+    # Simulate application reinitialization:
+    # Create a new database manager and cache instance
+    db2 = DatabaseManager(db_path)
+
+    cache2 = SemanticCache(
+        db2,
+        embedding_service,
+        config
+    )
+
+    # Retrieve the previously stored answer
+    result = cache2.lookup(
+        query="What is green computing?",
+        current_doc_ids=["doc_green"]
+    )
+
+    assert result["status"] == CacheValidationStatus.HIT_VALID
+    assert result["cached_answer"] == (
+        "Green computing reduces environmental impact."
+    )

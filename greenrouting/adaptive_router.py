@@ -61,10 +61,19 @@ class AdaptiveGreenRouter:
             model_name=initial_model,
             system_prompt=system_prompt
         )
+        generation_runs = [{
+            "model_name": initial_model,
+            "latency_seconds": gen_result.get("latency_seconds", 0.0),
+            "eval_count": gen_result.get("eval_count", 0)
+        }]
 
         initial_answer = gen_result.get("answer", "")
         latency_total = gen_result.get("latency_seconds", 0.0)
         total_eval_count = gen_result.get("eval_count", 0)
+
+        # Track whether any generation used simulation fallback
+        is_simulated = gen_result.get("is_simulated", False)
+
 
         # 4. Quality Validation
         quality_assessment = self.quality_guard.evaluate_answer(
@@ -80,35 +89,72 @@ class AdaptiveGreenRouter:
         retry_count = 0
         retry_reason = None
 
+
         # 5. Conditional Retry Escalation
         if quality_assessment["should_retry"]:
             retry_count = 1
-            final_model = self.model_config.capable_model
+            retry_model = self.model_config.capable_model
+
             retry_reason = (
-                f"Escalation Retry: Initial lightweight model ({initial_model}) yielded low quality "
-                f"score ({quality_assessment['quality_score']:.2f}). Re-running with capable model ({final_model})."
+                f"Escalation Retry: Initial lightweight model ({initial_model}) "
+                f"yielded low quality score "
+                f"({quality_assessment['quality_score']:.2f}). "
+                f"Re-running with capable model ({retry_model})."
             )
+
             logger.info(retry_reason)
 
-            # Re-generate with capable model
-            retry_gen = self.llm_client.generate(
-                prompt=prompt,
-                model_name=final_model,
-                system_prompt=system_prompt
-            )
+            try:
+                retry_gen = self.llm_client.generate(
+                    prompt=prompt,
+                    model_name=retry_model,
+                    system_prompt=system_prompt
+                )
 
-            final_answer = retry_gen.get("answer", "")
-            latency_total += retry_gen.get("latency_seconds", 0.0)
-            total_eval_count += retry_gen.get("eval_count", 0)
+                generation_runs.append({
+                    "model_name": retry_model,
+                    "latency_seconds": retry_gen.get("latency_seconds", 0.0),
+                    "eval_count": retry_gen.get("eval_count", 0)
+                })
 
-            # Re-evaluate final answer quality
-            quality_assessment = self.quality_guard.evaluate_answer(
-                query=query,
-                answer=final_answer,
-                context_chunks=context_chunks,
-                model_used=final_model,
-                is_lightweight=False
-            )
+                retry_answer = retry_gen.get("answer", "")
+
+                latency_total += retry_gen.get("latency_seconds", 0.0)
+                total_eval_count += retry_gen.get("eval_count", 0)
+
+                is_simulated = (
+                    is_simulated or retry_gen.get("is_simulated", False)
+                )
+
+                # Accept retry only when it returns a non-empty answer
+                if isinstance(retry_answer, str) and retry_answer.strip():
+
+                    final_answer = retry_answer
+                    final_model = retry_model
+
+                    quality_assessment = self.quality_guard.evaluate_answer(
+                        query=query,
+                        answer=final_answer,
+                        context_chunks=context_chunks,
+                        model_used=final_model,
+                        is_lightweight=False
+                    )
+
+                else:
+                    retry_reason += (
+                        " Retry returned an empty or invalid answer. "
+                        "Preserving the initial answer."
+                    )
+                    logger.warning(retry_reason)
+
+            except Exception as exc:
+                retry_reason += (
+                    f" Retry failed: {type(exc).__name__}: {exc}. "
+                    "Preserving the initial answer."
+                )
+                logger.exception("Capable model retry failed")
+
+
 
         return {
             "answer": final_answer,
@@ -116,6 +162,7 @@ class AdaptiveGreenRouter:
             "routing_reason": routing_reason,
             "initial_model": initial_model,
             "final_model": final_model,
+            "generation_runs": generation_runs,
             "is_lightweight": (final_model == self.model_config.lightweight_model),
             "retry_count": retry_count,
             "retry_reason": retry_reason,
@@ -124,5 +171,5 @@ class AdaptiveGreenRouter:
             "quality_explanation": quality_assessment["explanation"],
             "latency_seconds": latency_total,
             "eval_count": total_eval_count,
-            "is_simulated": gen_result.get("is_simulated", False)
+            "is_simulated": is_simulated
         }

@@ -254,6 +254,7 @@ class GreenRoutingOrchestrator:
 
             response_data = {
                 "answer": cached_answer,
+                "query_text": query,
                 "mode": mode,
                 "model_used": "Cached Response (Zero LLM Inference)",
                 "cache_status": cache_status,
@@ -313,6 +314,7 @@ class GreenRoutingOrchestrator:
             routing_reason = router_result["routing_reason"]
             retry_count = router_result["retry_count"]
             gen_latency = router_result["latency_seconds"]
+            generation_runs = router_result.get("generation_runs", [])
         else:
             # Standard RAG: Always use capable model
             model_used = self.settings.models.capable_model
@@ -323,16 +325,25 @@ class GreenRoutingOrchestrator:
             )
             final_answer = gen_result.get("answer", "")
             gen_latency = gen_result.get("latency_seconds", 0.0)
+            generation_runs = [{
+                "model_name": model_used,
+                "latency_seconds": gen_latency,
+                "eval_count": gen_result.get("eval_count", 0)
+            }]
+            retry_count = 0
 
-        total_elapsed = (time.perf_counter() - start_time) + gen_latency
+        # Total end-to-end query latency
+        total_elapsed = time.perf_counter() - start_time
+
 
         # 4. Energy and Carbon Tracking
         energy_telemetry = self.energy_tracker.track_operation(
             operation_name=f"query_execution_{mode}",
-            latency_seconds=total_elapsed,
+            latency_seconds=gen_latency,
             model_name=model_used,
             is_cache_hit=False,
-            retry_count=retry_count
+            retry_count=retry_count,
+            generation_runs=generation_runs or None
         )
 
         # 5. Quality Evaluation
@@ -353,6 +364,7 @@ class GreenRoutingOrchestrator:
 
         response_data = {
             "answer": final_answer,
+            "query_text": query,
             "mode": mode,
             "model_used": model_used,
             "cache_status": cache_status,
@@ -374,6 +386,7 @@ class GreenRoutingOrchestrator:
             "quality_score": quality_score,
             "measurement_label": energy_telemetry["measurement_label"],
             "energy_details": energy_telemetry["details"],
+            "generation_details": energy_telemetry.get("generation_details", []),
         }
         response_data["decision_trace"] = self._build_decision_trace(
             cache_status=cache_status,

@@ -1,0 +1,77 @@
+Yes, but add only a few high-value features. More features do not automatically make the project more innovative.
+
+The strongest additions would be:
+
+| Feature | What it does | Dependency |
+|---|---|---|
+| **Carbon Budget Mode** | User sets a limit such as “keep this query below 0.05 g CO₂”; the system chooses cache, small model, or capable model accordingly. | Workstreams 2 and 3 |
+| **Energy-Aware Retrieval** | Uses fewer document chunks for simple questions and more chunks for complex questions, reducing prompt size and energy. | Mostly Workstream 1 |
+| **Lifecycle Carbon Accounting** | Separates one-time document indexing energy from per-question energy and calculates the average cost per query. | Workstream 3 |
+| **Explainable Green Decisions** | Shows why a cache/model was selected, why escalation occurred, and how much energy was saved. | Already partly implemented |
+| **Quality–Carbon Pareto Benchmark** | Graphs answer quality, latency, and carbon so the team can show the best trade-off. | Workstream 4 |
+| **Privacy-Preserving Local Mode** | Detects sensitive information and ensures documents remain local without cloud calls. | Later enhancement |
+
+### Best additions before 13 November
+
+I recommend:
+Yes, but add only a few high-value features. More features do not automatically make the project more innovative.
+
+The strongest additions would be:
+
+| Feature | What it does | Dependency |
+|---|---|---|
+| **Carbon Budget Mode** | User sets a limit such as “keep this query below 0.05 g CO₂”; the system chooses cache, small model, or capable model accordingly. | Workstreams 2 and 3 |
+| **Energy-Aware Retrieval** | Uses fewer document chunks for simple questions and more chunks for complex questions, reducing prompt size and energy. | Mostly Workstream 1 |
+| **Lifecycle Carbon Accounting** | Separates one-time document indexing energy from per-question energy and calculates the average cost per query. | Workstream 3 |
+| **Explainable Green Decisions** | Shows why a cache/model was selected, why escalation occurred, and how much energy was saved. | Already partly implemented |
+| **Quality–Carbon Pareto Benchmark** | Graphs answer quality, latency, and carbon so the team can show the best trade-off. | Workstream 4 |
+| **Privacy-Preserving Local Mode** | Detects sensitive information and ensures documents remain local without cloud calls. | Later enhancement |
+
+### Best additions before 13 November
+
+I recommend:
+
+1. Document deletion and index rebuilding  
+2. Energy-aware retrieval using adaptive `top_k`  
+3. Explainable routing/cache messages  
+4. Quality–carbon benchmark chart  
+
+These can make the demo noticeably stronger without depending completely on Workstreams 2 and 3.
+
+### Good later-semester additions
+
+- Carbon budget enforcement
+- Live electricity-grid carbon intensity
+- Learned routing using machine learning
+- OCR for scanned PDFs
+- DOCX and spreadsheet support
+- Privacy/PII detection
+- Multi-user access control
+
+The honest innovation claim should be:
+
+> The individual techniques already exist, but GreenRouting combines document-grounded retrieval, semantic caching, adaptive model selection, quality safeguards, and carbon measurement into one locally measurable system.
+
+That combined quality-versus-energy evaluation is what gives the project value.
+1. Document deletion and index rebuilding  
+2. Energy-aware retrieval using adaptive `top_k`  
+3. Explainable routing/cache messages  
+4. Quality–carbon benchmark chart  
+
+These can make the demo noticeably stronger without depending completely on Workstreams 2 and 3.
+
+### Good later-semester additions
+
+- Carbon budget enforcement
+- Live electricity-grid carbon intensity
+- Learned routing using machine learning
+- OCR for scanned PDFs
+- DOCX and spreadsheet support
+- Privacy/PII detection
+- Multi-user access control
+
+The honest innovation claim should be:
+
+> The individual techniques already exist, but GreenRouting combines document-grounded retrieval, semantic caching, adaptive model selection, quality safeguards, and carbon measurement into one locally measurable system.
+
+That combined quality-versus-energy evaluation is what gives the project value.

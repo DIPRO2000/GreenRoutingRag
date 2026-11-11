@@ -31,6 +31,38 @@ DEFAULT_BENCHMARK_QUERIES = [
 ]
 
 
+def build_comparison_frame(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Return chart/table fields without mutating raw benchmark summaries."""
+    frame = summary_df.copy()
+    if frame.empty:
+        return frame
+
+    frame["quality_pct"] = (frame["avg_quality_score"] * 100.0).round(2)
+    frame["grounding_pct"] = (frame["avg_grounding_score"] * 100.0).round(2)
+    frame["carbon_g"] = frame["total_emissions_g"]
+
+    baseline_rows = frame.loc[frame["mode"] == ExecutionMode.STANDARD_RAG]
+    baseline = baseline_rows.iloc[0] if not baseline_rows.empty else frame.iloc[0]
+    baseline_energy = float(baseline["total_energy_kwh"])
+    baseline_carbon = float(baseline["total_emissions_g"])
+
+    if baseline_energy > 0:
+        frame["energy_savings_vs_standard_pct"] = (
+            ((baseline_energy - frame["total_energy_kwh"]) / baseline_energy) * 100.0
+        ).round(2)
+    else:
+        frame["energy_savings_vs_standard_pct"] = 0.0
+
+    if baseline_carbon > 0:
+        frame["carbon_savings_vs_standard_pct"] = (
+            ((baseline_carbon - frame["total_emissions_g"]) / baseline_carbon) * 100.0
+        ).round(2)
+    else:
+        frame["carbon_savings_vs_standard_pct"] = 0.0
+
+    return frame
+
+
 class BenchmarkRunner:
     """Orchestrates reproducible empirical evaluations of energy-aware RAG pipelines."""
 

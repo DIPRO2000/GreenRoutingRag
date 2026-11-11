@@ -18,7 +18,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from greenrouting.config import load_settings
 from greenrouting.orchestrator import GreenRoutingOrchestrator, ExecutionMode
-from greenrouting.benchmark import BenchmarkRunner, DEFAULT_BENCHMARK_QUERIES
+from greenrouting.benchmark import BenchmarkRunner, DEFAULT_BENCHMARK_QUERIES, build_comparison_frame
 from greenrouting.cache_validator import CacheValidationStatus
 
 # Page Configuration
@@ -206,7 +206,7 @@ with tab_rag:
 
             # Explainability & Routing Rationale
             st.markdown("#### 🧠 Decision Intelligence & Transparency")
-            col_dec1, col_dec2 = st.columns(2)
+            col_dec1, col_dec2, col_dec3 = st.columns(3)
 
             with col_dec1:
                 st.markdown("**Cache Decision:**")
@@ -223,6 +223,14 @@ with tab_rag:
                 st.write(response.get("routing_reason", "N/A"))
                 if response.get("retry_count", 0) > 0:
                     st.warning(f"⚠️ Quality Escalation: Retried with stronger model (Retry count: {response['retry_count']})")
+
+            with col_dec3:
+                st.markdown("**Retrieval Decision:**")
+                st.write(
+                    f"Used {response.get('retrieved_chunk_count', 0)} of "
+                    f"top-{response.get('retrieval_top_k', 0)} chunks."
+                )
+                st.write(response.get("retrieval_reason", "N/A"))
 
             # Source references
             st.markdown("#### 📚 Source Citations & References")
@@ -256,7 +264,16 @@ with tab_docs:
                 file_bytes = uploaded_file.read()
                 try:
                     res = orchestrator.process_and_index_document(uploaded_file.name, file_bytes)
-                    st.success(f"Indexed `{uploaded_file.name}` ({res['total_chunks']} chunks, {res['total_characters']} characters)")
+                    if res.get("duplicate"):
+                        st.info(
+                            f"`{uploaded_file.name}` is already indexed as "
+                            f"`{res['filename']}`; duplicate upload skipped."
+                        )
+                    else:
+                        st.success(
+                            f"Indexed `{uploaded_file.name}` "
+                            f"({res['total_chunks']} chunks, {res['total_characters']} characters)"
+                        )
                 except Exception as e:
                     st.error(f"Error processing `{uploaded_file.name}`: {e}")
                 progress.progress((idx + 1) / len(uploaded_files))
@@ -286,6 +303,23 @@ with tab_docs:
         df_docs = pd.DataFrame(all_docs)[["filename", "file_type", "total_chunks", "total_characters", "doc_hash", "uploaded_at"]]
         df_docs["doc_hash"] = df_docs["doc_hash"].apply(lambda h: h[:12] + "...")
         st.dataframe(df_docs, use_container_width=True)
+
+        delete_options = {
+            f"{doc['filename']} ({doc['total_chunks']} chunks)": doc["doc_id"]
+            for doc in all_docs
+        }
+        selected_delete_label = st.selectbox("Select a document to remove:", list(delete_options.keys()))
+        if st.button("🗑️ Delete selected document", type="secondary"):
+            deletion = orchestrator.delete_document(delete_options[selected_delete_label])
+            if deletion.get("deleted"):
+                st.success(
+                    f"Removed {deletion['filename']} ({deletion['removed_chunk_count']} chunks). "
+                    f"Rebuilt index with {deletion['remaining_chunks']} remaining chunks."
+                )
+                st.rerun()
+            else:
+                st.warning("That document is no longer indexed. Refreshing the list.")
+                st.rerun()
 
 # -------------------------------------------------------------
 # TAB 3: SEMANTIC CACHE INSPECTOR
@@ -364,6 +398,7 @@ with tab_bench:
         bench_data = st.session_state["last_benchmark"]
         comp = bench_data["comparative_analysis"]
         summary_df = bench_data["summary_df"]
+        comparison_df = build_comparison_frame(summary_df)
         records_df = bench_data["detailed_records_df"]
 
         st.divider()
@@ -432,6 +467,59 @@ with tab_bench:
             )
             fig_qual.update_layout(showlegend=False)
             st.plotly_chart(fig_qual, use_container_width=True)
+
+        st.markdown("#### 🎯 Quality–Carbon Trade-off")
+        fig_quality_carbon = px.scatter(
+            comparison_df,
+            x="carbon_g",
+            y="quality_pct",
+            text="mode",
+            size="total_queries",
+            color="mode",
+            title="Answer Quality vs Carbon Footprint — Higher quality and lower carbon is preferred",
+            labels={
+                "carbon_g": "Carbon (g CO₂eq)",
+                "quality_pct": "Average Quality (%)",
+                "mode": "Pipeline Mode",
+            },
+            color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"],
+        )
+        fig_quality_carbon.update_traces(textposition="top center")
+        fig_quality_carbon.update_layout(showlegend=False)
+        st.plotly_chart(fig_quality_carbon, use_container_width=True)
+
+        st.markdown("#### 📋 Quality, Cost, and Savings Summary")
+        comparison_columns = [
+            "mode",
+            "quality_pct",
+            "grounding_pct",
+            "avg_latency_sec",
+            "cache_hit_rate_pct",
+            "total_energy_kwh",
+            "carbon_g",
+            "energy_savings_vs_standard_pct",
+            "carbon_savings_vs_standard_pct",
+        ]
+        st.dataframe(
+            comparison_df[comparison_columns].rename(
+                columns={
+                    "mode": "Mode",
+                    "quality_pct": "Quality (%)",
+                    "grounding_pct": "Grounding (%)",
+                    "avg_latency_sec": "Avg Latency (s)",
+                    "cache_hit_rate_pct": "Cache Hits (%)",
+                    "total_energy_kwh": "Energy (kWh)",
+                    "carbon_g": "Carbon (g CO₂eq)",
+                    "energy_savings_vs_standard_pct": "Energy Savings vs Standard (%)",
+                    "carbon_savings_vs_standard_pct": "Carbon Savings vs Standard (%)",
+                }
+            ),
+            use_container_width=True,
+        )
+        st.caption(
+            "Interpretation: the strongest result lowers energy/carbon while keeping answer quality and grounding comparable. "
+            "Negative savings are preserved as observed measurements rather than hidden."
+        )
 
         st.markdown("#### 📄 Detailed Query Execution Records")
         st.dataframe(records_df, use_container_width=True)

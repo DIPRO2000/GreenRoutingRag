@@ -17,6 +17,7 @@ from greenrouting.semantic_cache import SemanticCache
 from greenrouting.cache_validator import CacheValidationStatus
 from greenrouting.energy_tracker import EnergyTracker
 from greenrouting.evaluator import RagEvaluator
+from greenrouting.retrieval_policy import choose_top_k
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,21 @@ class GreenRoutingOrchestrator:
     def process_and_index_document(self, filename: str, file_bytes: bytes) -> Dict[str, Any]:
         """Process an uploaded document, chunk it, embed it, and store metadata in SQLite & FAISS."""
         doc_meta, chunks = self.doc_processor.process_document(filename, file_bytes)
+
+        existing = self.db.get_document_by_hash(doc_meta["doc_hash"])
+        if existing:
+            logger.info(
+                "Skipping duplicate document '%s'; already indexed as '%s'.",
+                filename,
+                existing["filename"],
+            )
+            return {
+                "doc_id": existing["doc_id"],
+                "filename": existing["filename"],
+                "total_chunks": existing["total_chunks"],
+                "total_characters": existing["total_characters"],
+                "duplicate": True,
+            }
         
         # Save to SQLite
         self.db.save_document(
@@ -84,7 +100,42 @@ class GreenRoutingOrchestrator:
             "doc_id": doc_meta["doc_id"],
             "filename": doc_meta["filename"],
             "total_chunks": doc_meta["total_chunks"],
-            "total_characters": doc_meta["total_characters"]
+            "total_characters": doc_meta["total_characters"],
+            "duplicate": False,
+        }
+
+    def delete_document(self, doc_id: str) -> Dict[str, Any]:
+        """Delete one document and rebuild the vector index from remaining DB chunks."""
+        document = next((doc for doc in self.db.get_all_documents() if doc["doc_id"] == doc_id), None)
+        if document is None:
+            return {
+                "deleted": False,
+                "doc_id": doc_id,
+                "filename": None,
+                "removed_chunk_count": 0,
+                "invalidated_cache_count": 0,
+                "remaining_documents": len(self.db.get_all_documents()),
+                "remaining_chunks": self.vector_store.get_total_chunks(),
+            }
+
+        previous_chunks = self.db.get_all_chunks()
+        try:
+            deletion = self.db.delete_document(doc_id)
+            remaining_chunks = self.db.get_all_chunks()
+            self.vector_store.rebuild(remaining_chunks)
+        except Exception:
+            # Restore the index from the pre-delete snapshot when rebuilding fails.
+            self.vector_store.rebuild(previous_chunks)
+            raise
+
+        return {
+            "deleted": True,
+            "doc_id": doc_id,
+            "filename": document["filename"],
+            "removed_chunk_count": deletion["removed_chunk_count"],
+            "invalidated_cache_count": deletion["invalidated_cache_count"],
+            "remaining_documents": len(self.db.get_all_documents()),
+            "remaining_chunks": self.vector_store.get_total_chunks(),
         }
 
     def execute_query(
@@ -104,8 +155,26 @@ class GreenRoutingOrchestrator:
         6. Persistent query logging in SQLite.
         """
         start_time = time.perf_counter()
-        k = top_k or self.settings.rag.top_k_retrieval
         active_doc_ids = [active_doc_id] if active_doc_id else [d["doc_id"] for d in self.db.get_all_documents()]
+
+        all_chunks = self.db.get_all_chunks()
+        available_chunks = sum(
+            1 for chunk in all_chunks
+            if active_doc_id is None or chunk.get("doc_id") == active_doc_id
+        )
+        if top_k is not None:
+            k = max(1, int(top_k)) if available_chunks else 0
+            retrieval_complexity_score = 0.0
+            retrieval_reason = f"Explicit top_k override requested: {k}."
+        else:
+            retrieval_decision = choose_top_k(
+                query=query,
+                available_chunks=available_chunks,
+                default_top_k=self.settings.rag.top_k_retrieval,
+            )
+            k = retrieval_decision.top_k
+            retrieval_complexity_score = retrieval_decision.complexity_score
+            retrieval_reason = retrieval_decision.reason
 
         # 1. Retrieve Context Chunks
         search_results = self.vector_store.search(query, top_k=k, doc_id_filter=active_doc_id)
@@ -122,13 +191,32 @@ class GreenRoutingOrchestrator:
                 "complexity_score": 0.0,
                 "routing_reason": "N/A",
                 "retry_count": 0,
+                "retrieval_top_k": k,
+                "retrieved_chunk_count": 0,
+                "retrieval_reason": retrieval_reason,
+                "retrieval_complexity_score": retrieval_complexity_score,
                 "retrieved_chunks": [],
                 "sources": [],
                 "latency_seconds": 0.001,
                 "energy_kwh": 0.0,
                 "emissions_g": 0.0,
                 "grounding_score": 0.0,
-                "measurement_label": "N/A"
+                "measurement_label": "N/A",
+                "decision_trace": self._build_decision_trace(
+                    cache_status=CacheValidationStatus.MISS,
+                    cache_reason="No documents indexed.",
+                    retrieval_top_k=k,
+                    retrieved_chunk_count=0,
+                    retrieval_reason=retrieval_reason,
+                    model_used="None",
+                    complexity_score=0.0,
+                    routing_reason="N/A",
+                    retry_count=0,
+                    energy_kwh=0.0,
+                    emissions_g=0.0,
+                    latency_seconds=0.001,
+                    measurement_label="N/A",
+                )
             }
 
         prompt = self.rag_pipeline.build_prompt(query, retrieved_chunks)
@@ -174,6 +262,10 @@ class GreenRoutingOrchestrator:
                 "complexity_score": 0.0,
                 "routing_reason": "Bypassed LLM inference via verified semantic cache match.",
                 "retry_count": 0,
+                "retrieval_top_k": k,
+                "retrieved_chunk_count": len(retrieved_chunks),
+                "retrieval_reason": retrieval_reason,
+                "retrieval_complexity_score": retrieval_complexity_score,
                 "retrieved_chunks": retrieved_chunks,
                 "sources": self._format_sources(retrieved_chunks, similarity_scores),
                 "latency_seconds": elapsed,
@@ -183,8 +275,23 @@ class GreenRoutingOrchestrator:
                 "grounding_score": eval_metrics["groundedness"],
                 "quality_score": eval_metrics["composite_score"],
                 "measurement_label": energy_telemetry["measurement_label"],
-                "energy_details": energy_telemetry["details"]
+                "energy_details": energy_telemetry["details"],
             }
+            response_data["decision_trace"] = self._build_decision_trace(
+                cache_status=cache_status,
+                cache_reason=cache_reason,
+                retrieval_top_k=k,
+                retrieved_chunk_count=len(retrieved_chunks),
+                retrieval_reason=retrieval_reason,
+                model_used=response_data["model_used"],
+                complexity_score=0.0,
+                routing_reason=response_data["routing_reason"],
+                retry_count=0,
+                energy_kwh=response_data["energy_kwh"],
+                emissions_g=response_data["emissions_g"],
+                latency_seconds=response_data["latency_seconds"],
+                measurement_label=response_data["measurement_label"],
+            )
             self._log_execution(response_data)
             return response_data
 
@@ -265,6 +372,10 @@ class GreenRoutingOrchestrator:
             "complexity_score": complexity_score,
             "routing_reason": routing_reason,
             "retry_count": retry_count,
+            "retrieval_top_k": k,
+            "retrieved_chunk_count": len(retrieved_chunks),
+            "retrieval_reason": retrieval_reason,
+            "retrieval_complexity_score": retrieval_complexity_score,
             "retrieved_chunks": retrieved_chunks,
             "sources": self._format_sources(retrieved_chunks, similarity_scores),
             "latency_seconds": round(total_elapsed, 4),
@@ -275,11 +386,68 @@ class GreenRoutingOrchestrator:
             "quality_score": quality_score,
             "measurement_label": energy_telemetry["measurement_label"],
             "energy_details": energy_telemetry["details"],
-            "generation_details": energy_telemetry.get("generation_details", [])
+            "generation_details": energy_telemetry.get("generation_details", []),
         }
+        response_data["decision_trace"] = self._build_decision_trace(
+            cache_status=cache_status,
+            cache_reason=cache_reason,
+            retrieval_top_k=k,
+            retrieved_chunk_count=len(retrieved_chunks),
+            retrieval_reason=retrieval_reason,
+            model_used=model_used,
+            complexity_score=complexity_score,
+            routing_reason=routing_reason,
+            retry_count=retry_count,
+            energy_kwh=energy_telemetry["energy_kwh"],
+            emissions_g=energy_telemetry["emissions_g"],
+            latency_seconds=total_elapsed,
+            measurement_label=energy_telemetry["measurement_label"],
+        )
 
         self._log_execution(response_data)
         return response_data
+
+    def _build_decision_trace(
+        self,
+        *,
+        cache_status: str,
+        cache_reason: str,
+        retrieval_top_k: int,
+        retrieved_chunk_count: int,
+        retrieval_reason: str,
+        model_used: str,
+        complexity_score: float,
+        routing_reason: str,
+        retry_count: int,
+        energy_kwh: float,
+        emissions_g: float,
+        latency_seconds: float,
+        measurement_label: str,
+    ) -> Dict[str, Any]:
+        """Build the stable, display-ready explanation contract."""
+        return {
+            "cache": {
+                "status": str(cache_status),
+                "reason": cache_reason,
+            },
+            "retrieval": {
+                "top_k": retrieval_top_k,
+                "chunk_count": retrieved_chunk_count,
+                "reason": retrieval_reason,
+            },
+            "routing": {
+                "model": model_used,
+                "complexity_score": complexity_score,
+                "reason": routing_reason,
+                "retry_count": retry_count,
+            },
+            "impact": {
+                "energy_kwh": energy_kwh,
+                "emissions_g": emissions_g,
+                "latency_seconds": latency_seconds,
+                "measurement_label": measurement_label,
+            },
+        }
 
     def _format_sources(self, chunks: List[Dict[str, Any]], scores: List[float]) -> List[Dict[str, Any]]:
         sources = []

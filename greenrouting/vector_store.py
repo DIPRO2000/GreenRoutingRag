@@ -212,6 +212,13 @@ class FaissVectorStore:
         self.save_index()
         return len(chunks)
 
+    def rebuild(self, chunks: List[Dict[str, Any]]) -> int:
+        """Recreate the persisted index from the supplied database snapshot."""
+        self.clear()
+        if not chunks:
+            return 0
+        return self.add_chunks(chunks)
+
     def search(self, query: str, top_k: int = 3, doc_id_filter: Optional[str] = None) -> List[Tuple[Dict[str, Any], float]]:
         """
         Search for top_k most similar chunks for a query.

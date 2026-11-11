@@ -47,10 +47,7 @@ caching:
   max_cache_age_hours: 72
 
 energy:
-  tracking_mode: "auto" # "auto", "codecarbon", or "modeled"
-  country_iso_code: "IND"
-  offline_mode: true
-  # Fallback TDP wattage assumptions for CPU/GPU if direct sensor unavailable
+  # Modeled TDP assumptions; this project does not read hardware power sensors.
   cpu_tdp_watts: 45.0
   gpu_tdp_watts: 75.0
   emission_factor_kg_per_kwh: 0.708 # Grid average emission factor (kg CO2 / kWh)

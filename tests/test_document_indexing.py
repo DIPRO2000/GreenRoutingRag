@@ -72,3 +72,24 @@ def test_delete_unknown_document_does_not_change_index(tmp_path):
     assert result["deleted"] is False
     assert orchestrator.db.get_all_documents() == before_docs
     assert orchestrator.vector_store.get_total_chunks() == before_chunks
+
+
+def test_delete_keeps_database_document_when_index_rebuild_fails(tmp_path, monkeypatch):
+    orchestrator, first, second = _orchestrator_with_documents(tmp_path)
+    original_chunks = orchestrator.db.get_all_chunks()
+
+    def fail_rebuild(_chunks):
+        raise RuntimeError("test rebuild failure")
+
+    monkeypatch.setattr(orchestrator.vector_store, "rebuild", fail_rebuild)
+    try:
+        orchestrator.delete_document(first["doc_id"])
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("delete should report the failed index rebuild")
+
+    assert {doc["doc_id"] for doc in orchestrator.db.get_all_documents()} == {
+        first["doc_id"], second["doc_id"]
+    }
+    assert orchestrator.db.get_all_chunks() == original_chunks

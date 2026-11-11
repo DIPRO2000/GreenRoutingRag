@@ -119,12 +119,13 @@ class GreenRoutingOrchestrator:
             }
 
         previous_chunks = self.db.get_all_chunks()
+        remaining_chunks = [chunk for chunk in previous_chunks if chunk.get("doc_id") != doc_id]
+        # Build the new index before committing the document deletion. If embedding
+        # or index construction fails, the document remains available in SQLite.
+        self.vector_store.rebuild(remaining_chunks)
         try:
             deletion = self.db.delete_document(doc_id)
-            remaining_chunks = self.db.get_all_chunks()
-            self.vector_store.rebuild(remaining_chunks)
         except Exception:
-            # Restore the index from the pre-delete snapshot when rebuilding fails.
             self.vector_store.rebuild(previous_chunks)
             raise
 
@@ -186,6 +187,7 @@ class GreenRoutingOrchestrator:
                 "answer": "No relevant documents found. Please upload and index documents first.",
                 "mode": mode,
                 "model_used": "None",
+                "is_simulated": False,
                 "cache_status": CacheValidationStatus.MISS,
                 "cache_validation_reason": "No documents indexed.",
                 "complexity_score": 0.0,
@@ -227,14 +229,10 @@ class GreenRoutingOrchestrator:
         cached_answer = None
 
         if mode in [ExecutionMode.RAG_WITH_CACHE, ExecutionMode.GREENROUTING]:
-            # For standard RAG with cache, pass no doc_ids to simulate naive caching
-            eval_doc_ids = active_doc_ids if mode == ExecutionMode.GREENROUTING else None
-            eval_chunks = retrieved_chunks if mode == ExecutionMode.GREENROUTING else None
-
             cache_result = self.semantic_cache.lookup(
                 query=query,
-                current_doc_ids=eval_doc_ids,
-                retrieved_chunks=eval_chunks
+                current_doc_ids=active_doc_ids,
+                retrieved_chunks=retrieved_chunks
             )
             cache_status = cache_result["status"]
             cache_reason = cache_result["validation_reason"]
@@ -257,6 +255,7 @@ class GreenRoutingOrchestrator:
                 "query_text": query,
                 "mode": mode,
                 "model_used": "Cached Response (Zero LLM Inference)",
+                "is_simulated": False,
                 "cache_status": cache_status,
                 "cache_validation_reason": cache_reason,
                 "complexity_score": 0.0,
@@ -315,6 +314,7 @@ class GreenRoutingOrchestrator:
             retry_count = router_result["retry_count"]
             gen_latency = router_result["latency_seconds"]
             generation_runs = router_result.get("generation_runs", [])
+            is_simulated = bool(router_result.get("is_simulated", False))
         else:
             # Standard RAG: Always use capable model
             model_used = self.settings.models.capable_model
@@ -324,6 +324,7 @@ class GreenRoutingOrchestrator:
                 system_prompt=RAG_SYSTEM_PROMPT
             )
             final_answer = gen_result.get("answer", "")
+            is_simulated = bool(gen_result.get("is_simulated", False))
             gen_latency = gen_result.get("latency_seconds", 0.0)
             generation_runs = [{
                 "model_name": model_used,
@@ -356,7 +357,10 @@ class GreenRoutingOrchestrator:
             self.semantic_cache.store(
                 query=query,
                 answer=final_answer,
-                source_doc_ids=active_doc_ids,
+                source_doc_ids=sorted({
+                    chunk.get("doc_id") for chunk in retrieved_chunks
+                    if chunk.get("doc_id")
+                }),
                 source_chunks=retrieved_chunks,
                 model_used=model_used,
                 grounding_score=grounding_score
@@ -367,6 +371,7 @@ class GreenRoutingOrchestrator:
             "query_text": query,
             "mode": mode,
             "model_used": model_used,
+            "is_simulated": is_simulated,
             "cache_status": cache_status,
             "cache_validation_reason": cache_reason,
             "complexity_score": complexity_score,

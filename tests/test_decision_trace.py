@@ -52,6 +52,7 @@ def test_generated_response_maps_retrieval_routing_and_impact(tmp_path):
     assert trace["retrieval"]["chunk_count"] == response["retrieved_chunk_count"]
     assert trace["routing"]["model"] == response["model_used"]
     assert trace["impact"]["measurement_label"] == response["measurement_label"]
+    assert response["is_simulated"] is True
 
 
 def test_cache_hit_trace_explains_llm_bypass(tmp_path):
@@ -68,3 +69,29 @@ def test_cache_hit_trace_explains_llm_bypass(tmp_path):
     trace = cached["decision_trace"]
     assert trace["cache"]["status"] == "HIT_VALID"
     assert "bypassed" in trace["routing"]["reason"].lower()
+
+
+def test_rag_with_cache_validates_against_actual_retrieved_document(tmp_path, monkeypatch):
+    orchestrator = _build_orchestrator(tmp_path)
+    indexed = orchestrator.process_and_index_document(
+        "scope.txt", b"The project stores relevant document scope with retrieved evidence."
+    )
+    observed = {}
+
+    def capture_lookup(**kwargs):
+        observed.update(kwargs)
+        return {
+            "status": "MISS",
+            "cached_answer": None,
+            "validation_reason": "test miss",
+        }
+
+    monkeypatch.setattr(orchestrator.semantic_cache, "lookup", capture_lookup)
+    orchestrator.execute_query(
+        "What does this project store?",
+        mode=ExecutionMode.RAG_WITH_CACHE,
+    )
+
+    assert observed["current_doc_ids"] == [indexed["doc_id"]]
+    assert observed["retrieved_chunks"]
+    assert {chunk["doc_id"] for chunk in observed["retrieved_chunks"]} == {indexed["doc_id"]}

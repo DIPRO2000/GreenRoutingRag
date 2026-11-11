@@ -84,7 +84,7 @@ We will **not** claim that a laptop is always greener than a cloud AI service. O
 | Sentence Transformers | Converts questions into numerical meaning vectors so similar questions can be recognised. |
 | FAISS | Fast local search for document chunks and cached questions/answers. |
 | LangChain (light use) | Helps organise document loading, splitting, retrieval, and prompts. |
-| CodeCarbon | Estimates energy use and CO2e from local CPU/GPU/RAM activity. |
+| Energy tracker | Models energy and CO2e from configured CPU/GPU power assumptions and generation time. |
 | pandas | Stores and analyses query logs and benchmark results. |
 | Matplotlib or Plotly | Creates charts for the dashboard/report. |
 | PyPDF / docx reader | Extracts text from PDFs and Word documents. |
@@ -148,7 +148,7 @@ The application can run without a powerful gaming GPU, but the experience become
 1. Define three paths: cache, small model, stronger model.
 2. Route based on cache confidence, retrieved-document confidence, and simple question rules.
 3. Record response time, chosen path, prompt/output length, and model name.
-4. Track local energy/CO2e using CodeCarbon where possible; label all results as estimates.
+4. Estimate energy/CO2e using configured CPU/GPU power assumptions; label all results as modeled estimates.
 
 ### Phase 4 — Dashboard and Benchmark
 
@@ -209,7 +209,7 @@ These are valuable extensions but are not required for the first submission:
 
 **How it can help us:**
 
-- Learn its CodeCarbon/energy-monitoring approach.
+- Review its energy-monitoring approach as background; this project currently uses its own modeled estimator.
 - Reuse or adapt small, clearly attributed parts only if needed.
 - Use it as a reference while we build a cleaner Streamlit application.
 

@@ -63,9 +63,6 @@ class CachingConfig:
 
 @dataclass
 class EnergyConfig:
-    tracking_mode: str = "auto"
-    country_iso_code: str = "IND"
-    offline_mode: bool = True
     cpu_tdp_watts: float = 45.0
     gpu_tdp_watts: float = 75.0
     emission_factor_kg_per_kwh: float = 0.708
@@ -138,9 +135,6 @@ def load_settings(custom_path: Path = None) -> Settings:
             max_cache_age_hours=caching_data.get("max_cache_age_hours", 72),
         ),
         energy=EnergyConfig(
-            tracking_mode=energy_data.get("tracking_mode", "auto"),
-            country_iso_code=energy_data.get("country_iso_code", "IND"),
-            offline_mode=energy_data.get("offline_mode", True),
             cpu_tdp_watts=energy_data.get("cpu_tdp_watts", 45.0),
             gpu_tdp_watts=energy_data.get("gpu_tdp_watts", 75.0),
             emission_factor_kg_per_kwh=energy_data.get("emission_factor_kg_per_kwh", 0.708),

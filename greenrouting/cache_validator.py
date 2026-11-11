@@ -55,15 +55,20 @@ class CacheQualityValidator:
 
         # 3. Document Context Compatibility (Do not serve answers across unrelated documents)
         cached_doc_ids = set(candidate_entry.get("source_doc_ids", []))
-        if self.config.enforce_document_context_match and current_doc_ids:
-            active_doc_set = set(current_doc_ids)
-            # If the query is scoped to active documents and none overlap with cached doc IDs
-            if cached_doc_ids and not cached_doc_ids.intersection(active_doc_set):
+        if self.config.enforce_document_context_match and (current_doc_ids or retrieved_chunks):
+            retrieved_doc_ids = {
+                chunk.get("doc_id") for chunk in (retrieved_chunks or [])
+                if chunk.get("doc_id")
+            }
+            # Actual evidence provenance is the strongest scope signal. Use the
+            # selected document scope only when chunk metadata is unavailable.
+            context_doc_ids = retrieved_doc_ids or set(current_doc_ids or [])
+            if not cached_doc_ids or not cached_doc_ids.intersection(context_doc_ids):
                 return (
                     False,
                     CacheValidationStatus.HIT_REJECTED_CONTEXT_MISMATCH,
                     f"Context mismatch: Cached answer originates from document(s) {cached_doc_ids}, "
-                    f"which does not match currently active document(s) {active_doc_set}."
+                    f"which does not match retrieved document(s) {context_doc_ids}."
                 )
 
         # 4. Staleness / Age Check

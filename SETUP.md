@@ -53,7 +53,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-The first installation can take several minutes because FAISS, PyTorch/Sentence Transformers, and CodeCarbon have larger dependencies.
+The first installation can take several minutes because FAISS, PyTorch, and Sentence Transformers have larger dependencies.
 
 ## 5. Install and prepare Ollama
 

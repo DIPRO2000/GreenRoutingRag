@@ -16,8 +16,10 @@ def test_energy_tracker_cache_hit():
 
     assert result["measurement_type"] == EnergyMeasurementType.CACHED_ZERO_INFERENCE
     assert result["is_direct_measurement"] is False
-    assert result["energy_kwh"] < 1e-6
+    expected_energy = (tracker.config.cpu_tdp_watts * 0.25 * 0.005) / 3_600_000
+    assert result["energy_kwh"] == pytest.approx(expected_energy)
     assert "Cache Reuse" in result["measurement_label"]
+    assert "llm inference was avoided" in result["details"].lower()
 
 
 def test_energy_tracker_lightweight_vs_capable_scaling():
@@ -41,10 +43,7 @@ def test_energy_tracker_lightweight_vs_capable_scaling():
 
     assert capable_res["energy_kwh"] > light_res["energy_kwh"]
     assert capable_res["emissions_kg"] > light_res["emissions_kg"]
-    assert light_res["measurement_type"] in [
-        EnergyMeasurementType.MODELED_TDP_ESTIMATE,
-        EnergyMeasurementType.DIRECT_HARDWARE
-    ]
+    assert light_res["measurement_type"] == EnergyMeasurementType.MODELED_TDP_ESTIMATE
 
 
 

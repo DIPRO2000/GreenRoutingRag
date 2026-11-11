@@ -75,6 +75,20 @@ class BenchmarkRunner:
         modes: Optional[List[str]] = None,
         active_doc_id: Optional[str] = None
     ) -> Dict[str, Any]:
+        """Run in a temporary semantic-cache state and restore user cache afterward."""
+        db = self.orchestrator.db
+        cache_snapshot = db.snapshot_cache_rows()
+        try:
+            return self._run_benchmark(queries, modes, active_doc_id)
+        finally:
+            db.restore_cache_rows(cache_snapshot)
+
+    def _run_benchmark(
+        self,
+        queries: Optional[List[str]] = None,
+        modes: Optional[List[str]] = None,
+        active_doc_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Execute full benchmark suite across specified modes using real queries and real measurements.
         """
@@ -134,6 +148,7 @@ class BenchmarkRunner:
                     "query": q,
                     "mode": mode,
                     "model_used": res.get("model_used"),
+                    "is_simulated": bool(res.get("is_simulated", False)),
                     "cache_status": res.get("cache_status"),
                     "complexity_score": res.get("complexity_score"),
                     "latency_seconds": lat,

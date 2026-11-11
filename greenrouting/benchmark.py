@@ -1,7 +1,7 @@
 """
-Benchmarking Engine for GreenRouting.
+Benchmarking Engine for GreenRouting / EcoWave.
 Executes empirical comparison across Standard RAG, RAG with Caching, and Complete GreenRouting.
-Measures energy (kWh), carbon emissions (g CO2eq), latency, cache hits, routing, and answer quality.
+Measures energy (Wh / kWh), carbon emissions (g CO2eq), latency, cache hits, routing, and answer quality.
 Exports experimental data to CSV and SQLite.
 """
 import uuid
@@ -29,6 +29,54 @@ DEFAULT_BENCHMARK_QUERIES = [
     "Which vector database is used for retrieval?",
     "Compare and analyze how adaptive green routing and quality-aware caching synergize to reduce energy."
 ]
+
+
+def build_comparison_frame(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Return chart/table fields without mutating raw benchmark summaries."""
+    frame = summary_df.copy()
+    if frame.empty:
+        return frame
+
+    if "avg_quality_score" in frame.columns:
+        frame["quality_pct"] = (frame["avg_quality_score"] * 100.0).round(2)
+    elif "quality_score" in frame.columns:
+        frame["quality_pct"] = (frame["quality_score"] * 100.0).round(2)
+    else:
+        frame["quality_pct"] = 0.0
+
+    if "avg_grounding_score" in frame.columns:
+        frame["grounding_pct"] = (frame["avg_grounding_score"] * 100.0).round(2)
+    elif "grounding_score" in frame.columns:
+        frame["grounding_pct"] = (frame["grounding_score"] * 100.0).round(2)
+    else:
+        frame["grounding_pct"] = 0.0
+
+    frame["carbon_g"] = frame.get("total_emissions_g", frame.get("emissions_g", 0.0))
+
+    # Energy in Wh
+    if "total_energy_wh" not in frame.columns and "total_energy_kwh" in frame.columns:
+        frame["total_energy_wh"] = (frame["total_energy_kwh"] * 1000.0).round(4)
+
+    baseline_rows = frame.loc[frame["mode"] == ExecutionMode.STANDARD_RAG]
+    baseline = baseline_rows.iloc[0] if not baseline_rows.empty else frame.iloc[0]
+    baseline_energy = float(baseline.get("total_energy_kwh", 0.0))
+    baseline_carbon = float(baseline.get("total_emissions_g", 0.0))
+
+    if baseline_energy > 0 and "total_energy_kwh" in frame.columns:
+        frame["energy_savings_vs_standard_pct"] = (
+            ((baseline_energy - frame["total_energy_kwh"]) / baseline_energy) * 100.0
+        ).round(2)
+    else:
+        frame["energy_savings_vs_standard_pct"] = 0.0
+
+    if baseline_carbon > 0 and "total_emissions_g" in frame.columns:
+        frame["carbon_savings_vs_standard_pct"] = (
+            ((baseline_carbon - frame["total_emissions_g"]) / baseline_carbon) * 100.0
+        ).round(2)
+    else:
+        frame["carbon_savings_vs_standard_pct"] = 0.0
+
+    return frame
 
 
 class BenchmarkRunner:
@@ -62,6 +110,7 @@ class BenchmarkRunner:
             # Clear cache between different mode benchmarks to ensure clean comparisons
             self.orchestrator.semantic_cache.db.clear_all_cache()
 
+            total_energy_wh = 0.0
             total_energy_kwh = 0.0
             total_emissions_g = 0.0
             latencies: List[float] = []
@@ -71,6 +120,7 @@ class BenchmarkRunner:
             lightweight_count = 0
             capable_count = 0
             retry_count = 0
+            simulated_count = 0
 
             for q_idx, q in enumerate(test_queries, start=1):
                 res = self.orchestrator.execute_query(
@@ -79,12 +129,17 @@ class BenchmarkRunner:
                     active_doc_id=active_doc_id
                 )
 
-                total_energy_kwh += res.get("energy_kwh", 0.0)
+                q_wh = res.get("energy_wh", res.get("energy_kwh", 0.0) * 1000.0)
+                total_energy_wh += q_wh
+                total_energy_kwh += res.get("energy_kwh", q_wh / 1000.0)
                 total_emissions_g += res.get("emissions_g", 0.0)
                 lat = res.get("latency_seconds", 0.0)
                 latencies.append(lat)
                 grounding_scores.append(res.get("grounding_score", 0.0))
                 quality_scores.append(res.get("quality_score", 0.0))
+
+                if res.get("is_simulated"):
+                    simulated_count += 1
 
                 if "HIT_VALID" in res.get("cache_status", ""):
                     cache_hits += 1
@@ -105,11 +160,16 @@ class BenchmarkRunner:
                     "cache_status": res.get("cache_status"),
                     "complexity_score": res.get("complexity_score"),
                     "latency_seconds": lat,
+                    "energy_wh": round(q_wh, 6),
                     "energy_kwh": res.get("energy_kwh"),
                     "emissions_g": res.get("emissions_g"),
                     "grounding_score": res.get("grounding_score"),
                     "quality_score": res.get("quality_score"),
-                    "retry_count": res.get("retry_count", 0)
+                    "retry_count": res.get("retry_count", 0),
+                    "is_simulated": res.get("is_simulated", False),
+                    "stage_latencies": res.get("stage_latencies", {}),
+                    "energy_savings_pct": res.get("energy_savings_pct", 0.0),
+                    "carbon_savings_g": res.get("carbon_savings_g", 0.0)
                 })
 
             n = len(test_queries)
@@ -127,7 +187,9 @@ class BenchmarkRunner:
                 "lightweight_count": lightweight_count,
                 "capable_count": capable_count,
                 "retry_count": retry_count,
+                "simulated_count": simulated_count,
                 "avg_latency_sec": round(avg_lat, 4),
+                "total_energy_wh": round(total_energy_wh, 6),
                 "total_energy_kwh": round(total_energy_kwh, 8),
                 "total_emissions_g": round(total_emissions_g, 5),
                 "total_emissions_kg": round(total_emissions_g / 1000.0, 8),
@@ -149,12 +211,17 @@ class BenchmarkRunner:
             e_energy = greenrouting_res["total_energy_kwh"]
             energy_savings_pct = round(((b_energy - e_energy) / b_energy) * 100.0, 2) if b_energy > 0 else 0.0
 
+            b_carbon = baseline["total_emissions_g"]
+            e_carbon = greenrouting_res["total_emissions_g"]
+            carbon_savings_g = round(b_carbon - e_carbon, 4)
+
             b_lat = baseline["avg_latency_sec"]
             e_lat = greenrouting_res["avg_latency_sec"]
             latency_reduction_pct = round(((b_lat - e_lat) / b_lat) * 100.0, 2) if b_lat > 0 else 0.0
 
             comparative_analysis = {
                 "energy_savings_pct": energy_savings_pct,
+                "carbon_savings_g": carbon_savings_g,
                 "latency_reduction_pct": latency_reduction_pct,
                 "baseline_energy_kwh": b_energy,
                 "greenrouting_energy_kwh": e_energy,

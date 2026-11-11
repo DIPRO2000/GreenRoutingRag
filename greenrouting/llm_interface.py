@@ -7,6 +7,7 @@ import logging
 import requests
 import json
 import time
+import re
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -123,11 +124,14 @@ class OllamaClient:
                 "prompt_eval_count": 35
             }
 
+        # Clean out chunk metadata header tags from context_part
+        cleaned_context = re.sub(r'\[Source \d+ \| Chunk:[^\]]+\]', '', context_part)
+
         # Extract sentences from context that share keywords with the question
         q_words = set(w.lower() for w in question_part.replace("?", "").replace(".", "").split()
                       if len(w) > 3 and w.lower() not in {"what", "which", "where", "when", "how", "does", "explain", "describe"})
         
-        sentences = [s.strip() for s in context_part.replace("\n", " ").split(".") if len(s.strip()) > 10]
+        sentences = [s.strip() for s in cleaned_context.replace("\n", " ").split(".") if len(s.strip()) > 10]
         matching_sentences = []
         for s in sentences:
             s_lower = s.lower()
@@ -140,19 +144,15 @@ class OllamaClient:
 
         if not top_sentences:
             # Fallback to the first few sentences of the retrieved chunk
-            top_sentences = sentences[:2] if sentences else [context_part[:150]]
+            top_sentences = sentences[:2] if sentences else [cleaned_context[:150]]
 
         grounded_core = ". ".join(top_sentences) + "."
+        grounded_clean = re.sub(r'\[Source \d+ \| Chunk:[^\]]+\]', '', grounded_core).strip()
 
         if is_lightweight:
-            answer = f"Based on the provided document: {grounded_core}"
+            answer = f"Based on the provided document: {grounded_clean}"
         else:
-            answer = (
-                f"According to the source documentation:\n\n"
-                f"{grounded_core}\n\n"
-                f"In summary, this directly addresses the inquiry regarding '{question_part[:60]}...' "
-                f"using the verified document context."
-            )
+            answer = f"According to the source documentation: {grounded_clean}"
 
         return {
             "answer": answer,

@@ -74,7 +74,7 @@ class CacheQualityValidator:
                 created_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
                 now = datetime.now(timezone.utc)
                 if created_dt.tzinfo is None:
-                    now = datetime.utcnow()
+                    now = datetime.now(timezone.utc).replace(tzinfo=None)
                 age_hours = (now - created_dt).total_seconds() / 3600.0
                 if age_hours > self.config.max_cache_age_hours:
                     return (

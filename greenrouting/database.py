@@ -194,6 +194,22 @@ class DatabaseManager:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_document_chunks(self, doc_id: str) -> List[Dict[str, Any]]:
+        """Return every stored chunk for one document, in original chunk order."""
+        if not doc_id:
+            return []
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT chunk_id, doc_id, chunk_index, text_content, page_number, character_count
+                FROM document_chunks
+                WHERE doc_id = ?
+                ORDER BY chunk_index ASC
+                """,
+                (doc_id,),
+            )
+            return [dict(row) for row in rows]
+
     def get_document_by_hash(self, doc_hash: str) -> Optional[Dict[str, Any]]:
         """Return the first indexed document with this content hash, if any."""
         with self.get_connection() as conn:

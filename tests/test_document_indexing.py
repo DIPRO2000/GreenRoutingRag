@@ -93,3 +93,26 @@ def test_delete_keeps_database_document_when_index_rebuild_fails(tmp_path, monke
         first["doc_id"], second["doc_id"]
     }
     assert orchestrator.db.get_all_chunks() == original_chunks
+
+
+def test_document_chunk_loader_returns_every_chunk_in_document_order(tmp_path):
+    settings = load_settings()
+    settings.app.db_path = tmp_path / "summary-source.db"
+    settings.app.faiss_index_dir = tmp_path / "summary-faiss"
+    settings.rag.chunk_size = 100
+    settings.rag.chunk_overlap = 10
+    orchestrator = GreenRoutingOrchestrator(settings)
+    text = " ".join(
+        f"Section {index} explains a distinct detail of the document for later summary."
+        for index in range(12)
+    )
+    indexed = orchestrator.process_and_index_document("many-sections.txt", text.encode())
+    orchestrator.process_and_index_document("other.txt", b"Another separate document.")
+
+    chunks = orchestrator.db.get_document_chunks(indexed["doc_id"])
+
+    assert len(chunks) == indexed["total_chunks"]
+    assert len(chunks) > 1
+    assert [chunk["chunk_index"] for chunk in chunks] == list(range(len(chunks)))
+    assert {chunk["doc_id"] for chunk in chunks} == {indexed["doc_id"]}
+    assert orchestrator.db.get_document_chunks("missing-document") == []

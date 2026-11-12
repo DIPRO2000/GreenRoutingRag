@@ -102,14 +102,17 @@ class EnergyTracker:
 
                 run_power = self._estimate_model_power(run_model)
 
-                generation_details.append({
+                generation_detail = {
                     "model_name": run_model,
                     "latency_seconds": run_latency,
                     "power_watts": run_power,
                     "energy_kwh": (
                         run_power * run_latency / (3600.0 * 1000.0)
                     )
-                })
+                }
+                if run.get("stage"):
+                    generation_detail["stage"] = run["stage"]
+                generation_details.append(generation_detail)
 
             if not generation_details:
                 raise ValueError("No valid generation records provided.")

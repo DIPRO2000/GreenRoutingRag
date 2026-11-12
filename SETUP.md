@@ -178,7 +178,29 @@ Then open `http://localhost:8502`.
 
 The current document processor extracts selectable text. Image-only/scanned PDFs need OCR, which is planned as a later enhancement.
 
-## 11. Linux/macOS command equivalent
+## 11. Run with Docker
+
+Docker runs the Streamlit application in a container. Ollama remains installed on the host computer, so the model files do not get copied into the Docker image.
+
+1. Install and start Docker Desktop.
+2. Install Ollama on the host and make sure both configured models are downloaded with the `ollama pull` commands above.
+3. From the project folder, build and start the app:
+
+   ```powershell
+   docker compose up --build -d
+   ```
+
+4. Open <http://localhost:8501>. To view app logs, run:
+
+   ```powershell
+   docker compose logs -f app
+   ```
+
+The container connects to host Ollama at `host.docker.internal:11434`. If the app reports Ollama as offline, configure the host Ollama service to listen on `0.0.0.0:11434`, restart Ollama, and retry. Set `OLLAMA_BASE_URL` in `docker-compose.yml` if Ollama runs at a different address.
+
+Documents, SQLite data, and the FAISS index are stored in the `greenrouting-data` Docker volume. The embedding model download is stored separately in `huggingface-cache`. `docker compose down` stops the app but keeps these volumes. `docker compose down -v` removes the volumes and deletes their contents.
+
+## 12. Linux/macOS command equivalent
 
 The same project can run on Linux or macOS with these commands:
 
@@ -193,7 +215,7 @@ ollama pull llama3.2:3b
 python -m streamlit run app.py
 ```
 
-## 12. What gets created locally
+## 13. What gets created locally
 
 After the first run, the application creates local files under `data/`, including the SQLite database and FAISS index. These files are machine-specific runtime data and are ignored by Git. Do not commit them to the repository.
 

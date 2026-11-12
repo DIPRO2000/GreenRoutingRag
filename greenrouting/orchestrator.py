@@ -18,6 +18,7 @@ from greenrouting.cache_validator import CacheValidationStatus
 from greenrouting.energy_tracker import EnergyTracker
 from greenrouting.evaluator import RagEvaluator
 from greenrouting.retrieval_policy import choose_top_k
+from greenrouting.document_summarizer import DocumentSummarizer
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ class GreenRoutingOrchestrator:
         self.llm_client = OllamaClient(
             base_url=settings.models.ollama_base_url,
             enable_simulation_fallback=settings.models.enable_simulation_fallback
+        )
+        self.document_summarizer = DocumentSummarizer(
+            llm_client=self.llm_client,
+            model_name=settings.models.capable_model,
         )
         self.doc_processor = DocumentProcessor(
             chunk_size=settings.rag.chunk_size,
@@ -103,6 +108,89 @@ class GreenRoutingOrchestrator:
             "total_characters": doc_meta["total_characters"],
             "duplicate": False,
         }
+
+    def summarize_document(
+        self,
+        doc_id: str,
+        query_text: str = "Summarize this document.",
+        mode: str = ExecutionMode.GREENROUTING,
+    ) -> Dict[str, Any]:
+        """Summarize every stored chunk belonging to the selected document."""
+        chunks = self.db.get_document_chunks(doc_id)
+        summary_result = self.document_summarizer.summarize(chunks)
+        answer = summary_result["summary"]
+        energy = self.energy_tracker.track_operation(
+            operation_name="document_wide_summary",
+            latency_seconds=summary_result["latency_seconds"],
+            generation_runs=summary_result["generation_runs"],
+        )
+        quality = self.evaluator.evaluate(query_text, answer, chunks)
+        model_used = summary_result["model_used"]
+        sources = [
+            {
+                "source_index": index,
+                "chunk_id": chunk.get("chunk_id"),
+                "doc_id": chunk.get("doc_id"),
+                "page_number": chunk.get("page_number", 1),
+                "text_snippet": (
+                    chunk.get("text_content", "")[:250] + "..."
+                    if len(chunk.get("text_content", "")) > 250
+                    else chunk.get("text_content", "")
+                ),
+            }
+            for index, chunk in enumerate(chunks, start=1)
+        ]
+        summary_pages = sorted({source["page_number"] for source in sources if source["page_number"] is not None})
+        routing_reason = (
+            "Whole-document summaries use the configured capable model for each section and combine pass. "
+            "Cache reuse and adaptive routing are not applied to this summary path."
+        )
+        response = {
+            "answer": answer,
+            "query_text": query_text,
+            "mode": mode,
+            "model_used": model_used,
+            "is_simulated": summary_result["is_simulated"],
+            "is_document_summary": True,
+            "summary_call_count": summary_result["call_count"],
+            "cache_status": "BYPASSED",
+            "cache_validation_reason": "Document-wide summaries are generated from all chunks and are not cached.",
+            "complexity_score": 0.0,
+            "routing_reason": routing_reason,
+            "retry_count": 0,
+            "retrieval_top_k": len(chunks),
+            "retrieved_chunk_count": len(chunks),
+            "retrieval_reason": f"Processed all {len(chunks)} indexed chunks in bounded batches and combined their summaries.",
+            "retrieved_chunks": chunks,
+            "sources": sources,
+            "summary_pages": summary_pages,
+            "latency_seconds": energy["latency_seconds"],
+            "energy_kwh": energy["energy_kwh"],
+            "emissions_kg": energy["emissions_kg"],
+            "emissions_g": energy["emissions_g"],
+            "grounding_score": quality["groundedness"],
+            "quality_score": quality["composite_score"],
+            "measurement_label": energy["measurement_label"],
+            "energy_details": energy["details"],
+            "generation_details": energy.get("generation_details", []),
+        }
+        response["decision_trace"] = self._build_decision_trace(
+            cache_status=response["cache_status"],
+            cache_reason=response["cache_validation_reason"],
+            retrieval_top_k=len(chunks),
+            retrieved_chunk_count=len(chunks),
+            retrieval_reason=response["retrieval_reason"],
+            model_used=model_used,
+            complexity_score=0.0,
+            routing_reason=routing_reason,
+            retry_count=0,
+            energy_kwh=energy["energy_kwh"],
+            emissions_g=energy["emissions_g"],
+            latency_seconds=energy["latency_seconds"],
+            measurement_label=energy["measurement_label"],
+        )
+        self._log_execution(response)
+        return response
 
     def delete_document(self, doc_id: str) -> Dict[str, Any]:
         """Delete one document and rebuild the vector index from remaining DB chunks."""

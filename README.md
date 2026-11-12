@@ -10,6 +10,8 @@ The main idea is simple: do not use the biggest AI model for every question. Fir
 
 > **New team member?** Start with the command-by-command [setup manual](SETUP.md).
 
+> **Docker option:** with Docker Desktop and Ollama running, use `docker compose up --build -d`; see the setup manual for details.
+
 ## Problem We Are Solving
 
 Normal RAG (Retrieval-Augmented Generation) systems generally run document search and an AI model for every question. In a college, office, or company, people often ask the same policy questions repeatedly in different words. This repeats computation, increases response time, and uses electricity unnecessarily.

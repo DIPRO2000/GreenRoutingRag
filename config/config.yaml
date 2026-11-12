@@ -45,6 +45,7 @@ caching:
   enforce_document_context_match: true
   min_cache_grounding_score: 0.60
   max_cache_age_hours: 72
+  redis_url: "redis://localhost:6379/0"
 
 energy:
   # Modeled TDP assumptions; this project does not read hardware power sensors.

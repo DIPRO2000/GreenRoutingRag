@@ -59,6 +59,7 @@ class CachingConfig:
     enforce_document_context_match: bool = True
     min_cache_grounding_score: float = 0.60
     max_cache_age_hours: int = 72
+    redis_url: str = "redis://localhost:6379/0"
 
 
 @dataclass
@@ -133,6 +134,7 @@ def load_settings(custom_path: Path = None) -> Settings:
             enforce_document_context_match=caching_data.get("enforce_document_context_match", True),
             min_cache_grounding_score=caching_data.get("min_cache_grounding_score", 0.60),
             max_cache_age_hours=caching_data.get("max_cache_age_hours", 72),
+            redis_url=os.getenv("REDIS_URL", caching_data.get("redis_url", "redis://localhost:6379/0")),
         ),
         energy=EnergyConfig(
             cpu_tdp_watts=energy_data.get("cpu_tdp_watts", 45.0),

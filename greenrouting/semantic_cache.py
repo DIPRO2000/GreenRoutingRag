@@ -11,6 +11,7 @@ from greenrouting.config import CachingConfig
 from greenrouting.database import DatabaseManager
 from greenrouting.vector_store import EmbeddingService
 from greenrouting.cache_validator import CacheQualityValidator, CacheValidationStatus
+from greenrouting.cache_storage import QualityAwareCacheStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +20,16 @@ class SemanticCache:
     """Manages storage, retrieval, cosine matching, and quality validation of semantic cache entries."""
 
     def __init__(self, db_manager: DatabaseManager, embedding_service: EmbeddingService,
-                 caching_config: Optional[CachingConfig] = None):
+                 caching_config: Optional[CachingConfig] = None,
+                 cache_storage: Optional[QualityAwareCacheStore] = None):
         self.db = db_manager
         self.embedding_service = embedding_service
         self.config = caching_config or CachingConfig()
         self.validator = CacheQualityValidator(self.config)
+        self.storage = cache_storage or QualityAwareCacheStore(
+            db_manager,
+            redis_url=self.config.redis_url,
+        )
 
     def lookup(
         self,
@@ -49,7 +55,7 @@ class SemanticCache:
                 "candidate": None
             }
 
-        entries = self.db.get_active_cache_entries()
+        entries = self.storage.get_active_cache_entries()
         if not entries:
             return {
                 "status": CacheValidationStatus.MISS,
@@ -128,7 +134,7 @@ class SemanticCache:
 
             if is_valid:
                 # Update access count only for a valid cache hit
-                self.db.update_cache_access(candidate["cache_id"])
+                self.storage.update_cache_access(candidate["cache_id"])
 
                 return {
                     "status": CacheValidationStatus.HIT_VALID,
@@ -180,7 +186,7 @@ class SemanticCache:
         cache_id = f"cache_{uuid.uuid4().hex[:10]}"
         query_vec = self.embedding_service.embed_query(query).tolist()
 
-        self.db.insert_cache_entry(
+        self.storage.insert_cache_entry(
             cache_id=cache_id,
             query_text=query,
             query_embedding=query_vec,

@@ -79,7 +79,7 @@ def test_benchmark_restores_user_cache_even_when_run_fails(test_orchestrator, mo
     runner = BenchmarkRunner(orch)
 
     def simulate_benchmark_cache_mutation(*_args, **_kwargs):
-        orch.db.clear_all_cache()
+        orch.semantic_cache.storage.clear_all_cache()
         raise RuntimeError("benchmark failed")
 
     monkeypatch.setattr(runner, "_run_benchmark", simulate_benchmark_cache_mutation)

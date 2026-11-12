@@ -19,8 +19,11 @@ import plotly.graph_objects as go
 from greenrouting.config import load_settings
 from greenrouting.orchestrator import GreenRoutingOrchestrator, ExecutionMode
 from greenrouting.benchmark import BenchmarkRunner, DEFAULT_BENCHMARK_QUERIES, build_comparison_frame
+from greenrouting.parameter_optimizer import run_parameter_optimization
 from greenrouting.cache_validator import CacheValidationStatus
 from greenrouting.query_intent import DOCUMENT_SUMMARY, detect_query_intent
+from greenrouting.document_selection import build_document_options
+from greenrouting.document_processor import MIN_PDF_PAGE_TEXT_CHARS
 
 # Page Configuration
 st.set_page_config(
@@ -102,6 +105,11 @@ with st.sidebar:
     else:
         st.warning("🟠 Ollama: Offline (Simulated Deterministic RAG Mode Active)")
 
+    if orchestrator.semantic_cache.storage.backend_name == "Redis":
+        st.success("Redis quality cache: Connected")
+    else:
+        st.info("Redis unavailable; semantic cache is using SQLite fallback")
+
     total_docs = len(orchestrator.db.get_all_documents())
     total_chunks = orchestrator.vector_store.get_total_chunks()
     active_cache_count = len(orchestrator.db.get_active_cache_entries())
@@ -126,7 +134,7 @@ with st.sidebar:
     st.caption(f"**Cache Similarity Threshold:** `{settings.caching.semantic_similarity_threshold}`")
 
     if st.button("🧹 Purge Semantic Cache", use_container_width=True):
-        orchestrator.semantic_cache.db.clear_all_cache()
+        orchestrator.semantic_cache.storage.clear_all_cache()
         st.toast("Semantic cache purged successfully!", icon="🧹")
         st.rerun()
 
@@ -169,9 +177,7 @@ with tab_rag:
     )
 
     docs = orchestrator.db.get_all_documents()
-    doc_options = {"All Indexed Documents": None}
-    for d in docs:
-        doc_options[f"{d['filename']} ({d['total_chunks']} chunks)"] = d["doc_id"]
+    doc_options = build_document_options(docs)
 
     col_opt1, col_opt2 = st.columns([2, 1])
     selected_doc_label = col_opt1.selectbox("Filter Document Scope:", list(doc_options.keys()))
@@ -329,6 +335,14 @@ with tab_docs:
                             f"Indexed `{uploaded_file.name}` "
                             f"({res['total_chunks']} chunks, {res['total_characters']} characters)"
                         )
+                    if res.get("low_text_pages"):
+                        pages = ", ".join(map(str, res["low_text_pages"]))
+                        st.warning(
+                            f"Limited or no selectable text was found on PDF page(s) {pages} "
+                            f"(fewer than {MIN_PDF_PAGE_TEXT_CHARS} characters per page). "
+                            "These pages may be scanned or image-heavy, so answers and summaries may miss their content. "
+                            "OCR is not available."
+                        )
                 except Exception as e:
                     st.error(f"Error processing `{uploaded_file.name}`: {e}")
                 progress.progress((idx + 1) / len(uploaded_files))
@@ -456,6 +470,75 @@ with tab_bench:
                     f"{simulated_count} benchmark query result(s) used offline simulation. "
                     "Treat these as functional checks, not real model measurements."
                 )
+
+    st.divider()
+    st.markdown("### Quality-Constrained Threshold Tuning (Optuna)")
+    st.caption(
+        "Runs GreenRouting repeatedly with different routing and cache thresholds, then recommends "
+        "the lowest-energy settings that meet the quality floor. This can take several minutes. "
+        "Recommendations are experimental and do not change the app settings."
+    )
+    tune_col1, tune_col2, tune_col3 = st.columns([1, 1, 2])
+    with tune_col1:
+        optimizer_trials = st.number_input("Optuna trials", min_value=2, max_value=12, value=4, step=1)
+    with tune_col2:
+        quality_floor = st.number_input(
+            "Minimum quality score",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(settings.routing.min_acceptable_quality_score),
+            step=0.05,
+            format="%.2f",
+        )
+    with tune_col3:
+        tune_btn = st.button("Find lower-energy settings", use_container_width=True)
+
+    if tune_btn:
+        tuning_queries = [q.strip() for q in custom_queries_text.split("\n") if q.strip()]
+        if not tuning_queries:
+            st.error("Enter at least one evaluation question before tuning.")
+        elif total_chunks == 0:
+            st.error("Upload or load a document before tuning settings.")
+        else:
+            try:
+                with st.spinner(
+                    f"Running {int(optimizer_trials)} trials over {len(tuning_queries)} questions. "
+                    "This sends repeated requests to your configured model..."
+                ):
+                    tuning_result = run_parameter_optimization(
+                        orchestrator,
+                        queries=tuning_queries,
+                        n_trials=int(optimizer_trials),
+                        min_quality_score=float(quality_floor),
+                    )
+                st.session_state["last_parameter_optimization"] = tuning_result
+            except (RuntimeError, ValueError) as exc:
+                st.error(str(exc))
+
+    if "last_parameter_optimization" in st.session_state:
+        tuning_result = st.session_state["last_parameter_optimization"]
+        if tuning_result["feasible"]:
+            best = tuning_result["recommended"]
+            st.success(
+                f"Recommended trial {best['trial']}: quality {best['avg_quality_score']:.2f}, "
+                f"energy {best['total_energy_kwh']:.8f} kWh."
+            )
+            st.write({
+                "complexity_threshold": best["complexity_threshold"],
+                "cache_similarity_threshold": best["cache_similarity_threshold"],
+                "quality_floor": tuning_result["min_quality_score"],
+            })
+        else:
+            best_quality = tuning_result["best_quality_trial"]
+            st.warning(
+                "No tested settings met the quality floor. "
+                f"The highest measured score was {best_quality['avg_quality_score']:.2f}; "
+                "lower the floor only if that reflects your evaluation requirements."
+            )
+        if any(row["contains_simulated_results"] for row in tuning_result["trials"]):
+            st.warning("At least one trial used simulated model output; do not present its energy result as a live measurement.")
+        st.caption(tuning_result["quality_metric_note"])
+        st.dataframe(pd.DataFrame(tuning_result["trials"]), use_container_width=True, hide_index=True)
 
     # Restore the latest persisted run after a Streamlit restart.
     if "last_benchmark" not in st.session_state:

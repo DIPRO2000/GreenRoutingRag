@@ -5,8 +5,9 @@ Manages documents, semantic cache, query logs, and benchmark results.
 import sqlite3
 import json
 import logging
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Iterator, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,19 @@ class DatabaseManager:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_tables()
 
-    def get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def get_connection(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
 
     def init_tables(self) -> None:
         """Create schema if it does not exist."""

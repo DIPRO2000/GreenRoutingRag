@@ -76,12 +76,12 @@ class BenchmarkRunner:
         active_doc_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Run in a temporary semantic-cache state and restore user cache afterward."""
-        db = self.orchestrator.db
-        cache_snapshot = db.snapshot_cache_rows()
+        cache_store = self.orchestrator.semantic_cache.storage
+        cache_snapshot = cache_store.snapshot_cache_rows()
         try:
             return self._run_benchmark(queries, modes, active_doc_id)
         finally:
-            db.restore_cache_rows(cache_snapshot)
+            cache_store.restore_cache_rows(cache_snapshot)
 
     def _run_benchmark(
         self,
@@ -106,7 +106,7 @@ class BenchmarkRunner:
         for mode in test_modes:
             logger.info("Starting benchmark run for mode: %s", mode)
             # Clear cache between different mode benchmarks to ensure clean comparisons
-            self.orchestrator.semantic_cache.db.clear_all_cache()
+            self.orchestrator.semantic_cache.storage.clear_all_cache()
 
             total_energy_kwh = 0.0
             total_emissions_g = 0.0

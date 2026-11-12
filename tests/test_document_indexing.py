@@ -22,6 +22,70 @@ def test_duplicate_document_upload_is_skipped(tmp_path):
     assert orchestrator.vector_store.get_total_chunks() == first["total_chunks"]
 
 
+def test_index_failure_rolls_back_document_rows_and_restores_existing_index(tmp_path, monkeypatch):
+    orchestrator, first, second = _orchestrator_with_documents(tmp_path)
+    original_chunks = orchestrator.db.get_all_chunks()
+    original_add_chunks = orchestrator.vector_store.add_chunks
+    add_calls = 0
+
+    def fail_new_document_once(chunks):
+        nonlocal add_calls
+        add_calls += 1
+        if add_calls == 1:
+            raise RuntimeError("test embedding index failure")
+        return original_add_chunks(chunks)
+
+    monkeypatch.setattr(orchestrator.vector_store, "add_chunks", fail_new_document_once)
+
+    try:
+        orchestrator.process_and_index_document("broken.txt", b"This upload cannot be indexed.")
+    except RuntimeError as exc:
+        assert "test embedding index failure" in str(exc)
+    else:
+        raise AssertionError("index failure should be reported")
+
+    assert {doc["doc_id"] for doc in orchestrator.db.get_all_documents()} == {
+        first["doc_id"],
+        second["doc_id"],
+    }
+    assert orchestrator.db.get_all_chunks() == original_chunks
+    assert orchestrator.vector_store.chunks == original_chunks
+
+
+def test_document_selector_labels_distinguish_same_filename_and_chunk_count():
+    from greenrouting.document_selection import build_document_options
+
+    options = build_document_options([
+        {"doc_id": "doc-a", "filename": "report.pdf", "total_chunks": 4},
+        {"doc_id": "doc-b", "filename": "report.pdf", "total_chunks": 4},
+    ])
+
+    assert len(options) == 3  # Includes the all-documents choice.
+    assert {value for value in options.values() if value is not None} == {"doc-a", "doc-b"}
+
+
+def test_document_upload_result_includes_pdf_extraction_warnings(tmp_path, monkeypatch):
+    settings = load_settings()
+    settings.app.db_path = tmp_path / "extraction-warning.db"
+    settings.app.faiss_index_dir = tmp_path / "extraction-warning-faiss"
+    orchestrator = GreenRoutingOrchestrator(settings)
+    original_process = orchestrator.doc_processor.process_document
+
+    def process_with_extraction_warning(filename, file_bytes):
+        metadata, chunks = original_process("source.txt", file_bytes)
+        metadata["filename"] = filename
+        metadata["file_type"] = "PDF"
+        metadata.update(page_count=3, low_text_pages=[2, 3])
+        return metadata, chunks
+
+    monkeypatch.setattr(orchestrator.doc_processor, "process_document", process_with_extraction_warning)
+
+    result = orchestrator.process_and_index_document("mixed.pdf", b"Readable document text.")
+
+    assert result["page_count"] == 3
+    assert result["low_text_pages"] == [2, 3]
+
+
 def _orchestrator_with_documents(tmp_path):
     settings = load_settings()
     settings.app.db_path = tmp_path / "documents.db"

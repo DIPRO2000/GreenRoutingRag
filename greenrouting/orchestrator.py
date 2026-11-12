@@ -84,28 +84,40 @@ class GreenRoutingOrchestrator:
                 "filename": existing["filename"],
                 "total_chunks": existing["total_chunks"],
                 "total_characters": existing["total_characters"],
+                "page_count": doc_meta.get("page_count"),
+                "low_text_pages": doc_meta.get("low_text_pages", []),
                 "duplicate": True,
             }
-        
-        # Save to SQLite
-        self.db.save_document(
-            doc_id=doc_meta["doc_id"],
-            filename=doc_meta["filename"],
-            doc_hash=doc_meta["doc_hash"],
-            file_type=doc_meta["file_type"],
-            total_chunks=doc_meta["total_chunks"],
-            total_characters=doc_meta["total_characters"]
-        )
-        self.db.save_chunks(chunks)
 
-        # Add to Vector Store
-        self.vector_store.add_chunks(chunks)
+        try:
+            self.db.save_document(
+                doc_id=doc_meta["doc_id"],
+                filename=doc_meta["filename"],
+                doc_hash=doc_meta["doc_hash"],
+                file_type=doc_meta["file_type"],
+                total_chunks=doc_meta["total_chunks"],
+                total_characters=doc_meta["total_characters"]
+            )
+            self.db.save_chunks(chunks)
+            self.vector_store.add_chunks(chunks)
+        except Exception as exc:
+            try:
+                self.db.delete_document(doc_meta["doc_id"])
+                self.vector_store.rebuild(self.db.get_all_chunks())
+            except Exception as rollback_error:
+                logger.exception("Failed to roll back document '%s' after indexing failed.", filename)
+                raise RuntimeError(
+                    f"Indexing '{filename}' failed and its rollback also failed: {rollback_error}"
+                ) from exc
+            raise
 
         return {
             "doc_id": doc_meta["doc_id"],
             "filename": doc_meta["filename"],
             "total_chunks": doc_meta["total_chunks"],
             "total_characters": doc_meta["total_characters"],
+            "page_count": doc_meta.get("page_count"),
+            "low_text_pages": doc_meta.get("low_text_pages", []),
             "duplicate": False,
         }
 
@@ -213,6 +225,7 @@ class GreenRoutingOrchestrator:
         self.vector_store.rebuild(remaining_chunks)
         try:
             deletion = self.db.delete_document(doc_id)
+            self.semantic_cache.storage.invalidate_document(doc_id)
         except Exception:
             self.vector_store.rebuild(previous_chunks)
             raise

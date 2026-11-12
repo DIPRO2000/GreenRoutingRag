@@ -1,6 +1,6 @@
 # GreenRouting RAG — Setup and Run Manual
 
-This guide is for a new team member who has never run the project before. The normal setup is local: Python runs the application, Ollama runs the language models, and Streamlit opens the user interface in a browser.
+This guide is for a new team member who has never run the project before. The normal setup is local: Python runs the application, Ollama runs the language models, and Streamlit opens the user interface in a browser. Redis is used for the semantic cache when available; SQLite remains the durable fallback.
 
 ## 1. What you need to install
 
@@ -10,7 +10,7 @@ Install these items once:
 2. **Ollama** (required for real local AI answers)
 3. **Git** (optional; only needed if you download the project with Git)
 
-You do **not** need Redis, Docker, or a paid API key for the current prototype. The prototype uses local SQLite and FAISS files.
+Redis is optional for a direct Python run. If it is unavailable, the semantic cache continues to work from SQLite. Docker Compose starts Redis automatically with the app.
 
 Minimum practical computer: 8 GB RAM and about 20 GB free disk space. A modern 4-core CPU works, but 16 GB RAM and an SSD make the demo much faster. A GPU is optional.
 
@@ -96,6 +96,8 @@ If the team chooses different Ollama models, change those two values to the exac
 
 ## 6. Start the application
 
+To use Redis during a direct local Python run, start the Redis service first (for example, `docker compose up -d redis`). The default connection is `redis://localhost:6379/0`; set `REDIS_URL` to use a different Redis server. If the app cannot connect, its sidebar reports that SQLite fallback is active.
+
 From the project folder, with the virtual environment activated:
 
 ```powershell
@@ -107,6 +109,13 @@ Streamlit will print a local address. Open this address in a browser, normally:
 ```text
 http://localhost:8501
 ```
+
+The **Experimental Benchmarking** tab also includes Optuna threshold tuning. It runs several
+GreenRouting-only benchmark trials against the questions entered on that page. Keep Ollama
+running and load a document first; each trial sends all listed questions to the local model.
+The tuner restores the current thresholds afterward and only displays a recommendation. It
+uses the project's heuristic quality score, so treat the result as experimental and do not
+present simulated model runs as live energy measurements.
 
 To stop the application, return to PowerShell and press `Ctrl+C`.
 
@@ -184,7 +193,7 @@ Docker runs the Streamlit application in a container. Ollama remains installed o
 
 1. Install and start Docker Desktop.
 2. Install Ollama on the host and make sure both configured models are downloaded with the `ollama pull` commands above.
-3. From the project folder, build and start the app:
+3. From the project folder, build and start the app. Docker Compose starts Redis and the Streamlit app:
 
    ```powershell
    docker compose up --build -d

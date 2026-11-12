@@ -429,294 +429,433 @@ with tab_cache:
 # TAB 4: EXPERIMENTAL BENCHMARKING
 # -------------------------------------------------------------
 with tab_bench:
-    st.subheader("Empirical Benchmark and Ablation Study")
-    st.markdown(
-        "Run real comparative benchmarks across the three paradigms to measure empirical savings in "
-        "**Energy (kWh)**, **Carbon Emissions (g CO₂eq)**, and **Latency (s)** without sacrificing answer quality."
-    )
-
-    col_b1, col_b2 = st.columns([3, 1])
-    with col_b1:
-        st.markdown("**Benchmark Question Suite:** (Includes factual, analytical, and repeat queries)")
-        custom_queries_text = st.text_area(
-            "Evaluation Queries (one per line):",
-            value="\n".join(DEFAULT_BENCHMARK_QUERIES),
-            height=140
+    prebuilt_tab, custom_tab = st.tabs(["Prebuilt Benchmark", "Custom Document Benchmark"])
+    with prebuilt_tab:
+        st.subheader("Empirical Benchmark and Ablation Study")
+        st.markdown(
+            "Run real comparative benchmarks across the three paradigms to measure empirical savings in "
+            "**Energy (kWh)**, **Carbon Emissions (g CO₂eq)**, and **Latency (s)** without sacrificing answer quality."
         )
-    with col_b2:
-        st.write("")
-        st.write("")
-        run_bench_btn = st.button("⚡ Run Live Benchmark", type="primary", use_container_width=True)
 
-    if run_bench_btn:
-        queries_list = [q.strip() for q in custom_queries_text.split("\n") if q.strip()]
-        if not queries_list:
-            st.error("Please provide at least one query.")
-        elif total_chunks == 0:
-            st.error("Please upload documents before running benchmark.")
-        else:
-            with st.spinner("Running real benchmark across Standard RAG, RAG+Cache, and GreenRouting..."):
-                runner = BenchmarkRunner(orchestrator)
-                bench_result = runner.run_benchmark(queries=queries_list)
-
-            st.session_state["last_benchmark"] = bench_result
-            st.success("Benchmark completed successfully!")
-            simulated_count = sum(
-                bool(record.get("is_simulated", False))
-                for record in bench_result["detailed_records_df"].to_dict("records")
+        col_b1, col_b2 = st.columns([3, 1])
+        with col_b1:
+            st.markdown("**Benchmark Question Suite:** (Includes factual, analytical, and repeat queries)")
+            custom_queries_text = st.text_area(
+                "Evaluation Queries (one per line):",
+                value="\n".join(DEFAULT_BENCHMARK_QUERIES),
+                height=140
             )
-            if simulated_count:
-                st.warning(
-                    f"{simulated_count} benchmark query result(s) used offline simulation. "
-                    "Treat these as functional checks, not real model measurements."
+        with col_b2:
+            st.write("")
+            st.write("")
+            run_bench_btn = st.button("⚡ Run Live Benchmark", type="primary", use_container_width=True)
+
+        if run_bench_btn:
+            queries_list = [q.strip() for q in custom_queries_text.split("\n") if q.strip()]
+            if not queries_list:
+                st.error("Please provide at least one query.")
+            elif total_chunks == 0:
+                st.error("Please upload documents before running benchmark.")
+            else:
+                with st.spinner("Running real benchmark across Standard RAG, RAG+Cache, and GreenRouting..."):
+                    runner = BenchmarkRunner(orchestrator)
+                    bench_result = runner.run_benchmark(queries=queries_list)
+
+                st.session_state["last_benchmark"] = bench_result
+                st.success("Benchmark completed successfully!")
+                simulated_count = sum(
+                    bool(record.get("is_simulated", False))
+                    for record in bench_result["detailed_records_df"].to_dict("records")
                 )
-
-    st.divider()
-    st.markdown("### Quality-Constrained Threshold Tuning (Optuna)")
-    st.caption(
-        "Runs GreenRouting repeatedly with different routing and cache thresholds, then recommends "
-        "the lowest-energy settings that meet the quality floor. This can take several minutes. "
-        "Recommendations are experimental and do not change the app settings."
-    )
-    tune_col1, tune_col2, tune_col3 = st.columns([1, 1, 2])
-    with tune_col1:
-        optimizer_trials = st.number_input("Optuna trials", min_value=2, max_value=12, value=4, step=1)
-    with tune_col2:
-        quality_floor = st.number_input(
-            "Minimum quality score",
-            min_value=0.0,
-            max_value=1.0,
-            value=float(settings.routing.min_acceptable_quality_score),
-            step=0.05,
-            format="%.2f",
-        )
-    with tune_col3:
-        tune_btn = st.button("Find lower-energy settings", use_container_width=True)
-
-    if tune_btn:
-        tuning_queries = [q.strip() for q in custom_queries_text.split("\n") if q.strip()]
-        if not tuning_queries:
-            st.error("Enter at least one evaluation question before tuning.")
-        elif total_chunks == 0:
-            st.error("Upload or load a document before tuning settings.")
-        else:
-            try:
-                with st.spinner(
-                    f"Running {int(optimizer_trials)} trials over {len(tuning_queries)} questions. "
-                    "This sends repeated requests to your configured model..."
-                ):
-                    tuning_result = run_parameter_optimization(
-                        orchestrator,
-                        queries=tuning_queries,
-                        n_trials=int(optimizer_trials),
-                        min_quality_score=float(quality_floor),
+                if simulated_count:
+                    st.warning(
+                        f"{simulated_count} benchmark query result(s) used offline simulation. "
+                        "Treat these as functional checks, not real model measurements."
                     )
-                st.session_state["last_parameter_optimization"] = tuning_result
-            except (RuntimeError, ValueError) as exc:
-                st.error(str(exc))
-
-    if "last_parameter_optimization" in st.session_state:
-        tuning_result = st.session_state["last_parameter_optimization"]
-        if tuning_result["feasible"]:
-            best = tuning_result["recommended"]
-            st.success(
-                f"Recommended trial {best['trial']}: quality {best['avg_quality_score']:.2f}, "
-                f"energy {best['total_energy_kwh']:.8f} kWh."
-            )
-            st.write({
-                "complexity_threshold": best["complexity_threshold"],
-                "cache_similarity_threshold": best["cache_similarity_threshold"],
-                "quality_floor": tuning_result["min_quality_score"],
-            })
-        else:
-            best_quality = tuning_result["best_quality_trial"]
-            st.warning(
-                "No tested settings met the quality floor. "
-                f"The highest measured score was {best_quality['avg_quality_score']:.2f}; "
-                "lower the floor only if that reflects your evaluation requirements."
-            )
-        if any(row["contains_simulated_results"] for row in tuning_result["trials"]):
-            st.warning("At least one trial used simulated model output; do not present its energy result as a live measurement.")
-        st.caption(tuning_result["quality_metric_note"])
-        st.dataframe(pd.DataFrame(tuning_result["trials"]), use_container_width=True, hide_index=True)
-
-    # Restore the latest persisted run after a Streamlit restart.
-    if "last_benchmark" not in st.session_state:
-        saved_runs = orchestrator.db.get_all_benchmark_results()
-        if saved_runs:
-            latest_run_id = saved_runs[0]["run_id"]
-            mode_summaries = {}
-            for saved in saved_runs:
-                if saved["run_id"] != latest_run_id:
-                    continue
-                summary = dict(saved)
-                summary["total_emissions_g"] = summary["total_emissions_kg"] * 1000.0
-                summary["cache_hit_rate_pct"] = (
-                    round(summary["cache_hits"] / summary["total_queries"] * 100.0, 1)
-                    if summary["total_queries"] else 0.0
-                )
-                mode_summaries[summary["mode"]] = summary
-            baseline = mode_summaries.get(ExecutionMode.STANDARD_RAG, {})
-            green = mode_summaries.get(ExecutionMode.GREENROUTING, {})
-            comparative = {}
-            if baseline and green:
-                comparative = {
-                    "energy_savings_pct": round((baseline["total_energy_kwh"] - green["total_energy_kwh"]) / baseline["total_energy_kwh"] * 100.0, 2) if baseline["total_energy_kwh"] else 0.0,
-                    "latency_reduction_pct": round((baseline["avg_latency_sec"] - green["avg_latency_sec"]) / baseline["avg_latency_sec"] * 100.0, 2) if baseline["avg_latency_sec"] else 0.0,
-                    "quality_retained_pct": round(green["avg_quality_score"] / baseline["avg_quality_score"] * 100.0, 2) if baseline["avg_quality_score"] else 100.0,
-                }
-            st.session_state["last_benchmark"] = {
-                "run_id": latest_run_id,
-                "mode_summaries": mode_summaries,
-                "comparative_analysis": comparative,
-                "summary_df": pd.DataFrame(list(mode_summaries.values())),
-                "detailed_records_df": pd.DataFrame(),
-            }
-
-    # Display benchmark results if present in session state or database
-    if "last_benchmark" in st.session_state:
-        bench_data = st.session_state["last_benchmark"]
-        comp = bench_data["comparative_analysis"]
-        summary_df = bench_data["summary_df"]
-        comparison_df = build_comparison_frame(summary_df)
-        records_df = bench_data["detailed_records_df"]
 
         st.divider()
-        st.markdown("### 🏆 GreenRouting Comparative Performance vs Baseline")
-
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("⚡ Energy Savings", f"{comp.get('energy_savings_pct', 0.0)}%", delta=f"{comp.get('energy_savings_pct', 0.0)}%")
-        kpi2.metric("⏱️ Latency Reduction", f"{comp.get('latency_reduction_pct', 0.0)}%", delta=f"{comp.get('latency_reduction_pct', 0.0)}%")
-        kpi3.metric("🎯 Quality Retained", f"{comp.get('quality_retained_pct', 100.0)}%")
-        greenrouting_sum = bench_data["mode_summaries"].get(ExecutionMode.GREENROUTING, {})
-        kpi4.metric("🔄 Cache Hit Rate", f"{greenrouting_sum.get('cache_hit_rate_pct', 0.0)}%")
-
-        # Visualizations with Plotly
-        st.markdown("#### 📈 Comparative Analytics")
-        g1, g2 = st.columns(2)
-
-        with g1:
-            fig_energy = px.bar(
-                summary_df,
-                x="mode",
-                y="total_energy_kwh",
-                color="mode",
-                title="Total Energy Consumption (kWh) — Lower is Better",
-                labels={"total_energy_kwh": "Energy (kWh)", "mode": "Pipeline Mode"},
-                color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"]
-            )
-            fig_energy.update_layout(showlegend=False)
-            st.plotly_chart(fig_energy, use_container_width=True)
-
-        with g2:
-            fig_emissions = px.bar(
-                summary_df,
-                x="mode",
-                y="total_emissions_g",
-                color="mode",
-                title="Estimated Carbon Footprint (g CO₂eq) — Lower is Better",
-                labels={"total_emissions_g": "Emissions (g CO₂eq)", "mode": "Pipeline Mode"},
-                color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"]
-            )
-            fig_emissions.update_layout(showlegend=False)
-            st.plotly_chart(fig_emissions, use_container_width=True)
-
-        g3, g4 = st.columns(2)
-        with g3:
-            fig_lat = px.bar(
-                summary_df,
-                x="mode",
-                y="avg_latency_sec",
-                color="mode",
-                title="Average Response Latency (seconds) — Lower is Better",
-                labels={"avg_latency_sec": "Latency (s)", "mode": "Pipeline Mode"},
-                color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"]
-            )
-            fig_lat.update_layout(showlegend=False)
-            st.plotly_chart(fig_lat, use_container_width=True)
-
-        with g4:
-            fig_qual = px.bar(
-                summary_df,
-                x="mode",
-                y="avg_grounding_score",
-                color="mode",
-                title="Answer Grounding Quality Score (0 - 1.0) — Maintained",
-                labels={"avg_grounding_score": "Grounding Score", "mode": "Pipeline Mode"},
-                color_discrete_sequence=["#457b9d", "#457b9d", "#2a9d8f"]
-            )
-            fig_qual.update_layout(showlegend=False)
-            st.plotly_chart(fig_qual, use_container_width=True)
-
-        st.markdown("#### 🎯 Quality–Carbon Trade-off")
-        fig_quality_carbon = px.scatter(
-            comparison_df,
-            x="carbon_g",
-            y="quality_pct",
-            text="mode",
-            size="total_queries",
-            color="mode",
-            title="Answer Quality vs Carbon Footprint — Higher quality and lower carbon is preferred",
-            labels={
-                "carbon_g": "Carbon (g CO₂eq)",
-                "quality_pct": "Average Quality (%)",
-                "mode": "Pipeline Mode",
-            },
-            color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"],
-        )
-        fig_quality_carbon.update_traces(textposition="top center")
-        fig_quality_carbon.update_layout(showlegend=False)
-        st.plotly_chart(fig_quality_carbon, use_container_width=True)
-
-        st.markdown("#### 📋 Quality, Cost, and Savings Summary")
-        comparison_columns = [
-            "mode",
-            "quality_pct",
-            "grounding_pct",
-            "avg_latency_sec",
-            "cache_hit_rate_pct",
-            "total_energy_kwh",
-            "carbon_g",
-            "energy_savings_vs_standard_pct",
-            "carbon_savings_vs_standard_pct",
-        ]
-        st.dataframe(
-            comparison_df[comparison_columns].rename(
-                columns={
-                    "mode": "Mode",
-                    "quality_pct": "Quality (%)",
-                    "grounding_pct": "Grounding (%)",
-                    "avg_latency_sec": "Avg Latency (s)",
-                    "cache_hit_rate_pct": "Cache Hits (%)",
-                    "total_energy_kwh": "Energy (kWh)",
-                    "carbon_g": "Carbon (g CO₂eq)",
-                    "energy_savings_vs_standard_pct": "Energy Savings vs Standard (%)",
-                    "carbon_savings_vs_standard_pct": "Carbon Savings vs Standard (%)",
-                }
-            ),
-            use_container_width=True,
-        )
+        st.markdown("### Quality-Constrained Threshold Tuning (Optuna)")
         st.caption(
-            "Interpretation: the strongest result lowers energy/carbon while keeping answer quality and grounding comparable. "
-            "Negative savings are preserved as observed measurements rather than hidden."
+            "Runs GreenRouting repeatedly with different routing and cache thresholds, then recommends "
+            "the lowest-energy settings that meet the quality floor. This can take several minutes. "
+            "Recommendations are experimental and do not change the app settings."
         )
+        tune_col1, tune_col2, tune_col3 = st.columns([1, 1, 2])
+        with tune_col1:
+            optimizer_trials = st.number_input("Optuna trials", min_value=2, max_value=12, value=4, step=1)
+        with tune_col2:
+            quality_floor = st.number_input(
+                "Minimum quality score",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(settings.routing.min_acceptable_quality_score),
+                step=0.05,
+                format="%.2f",
+            )
+        with tune_col3:
+            tune_btn = st.button("Find lower-energy settings", use_container_width=True)
 
-        st.markdown("#### 📄 Detailed Query Execution Records")
-        if records_df.empty:
-            st.info("Per-query details are available immediately after a run; saved history contains mode summaries.")
+        if tune_btn:
+            tuning_queries = [q.strip() for q in custom_queries_text.split("\n") if q.strip()]
+            if not tuning_queries:
+                st.error("Enter at least one evaluation question before tuning.")
+            elif total_chunks == 0:
+                st.error("Upload or load a document before tuning settings.")
+            else:
+                try:
+                    with st.spinner(
+                        f"Running {int(optimizer_trials)} trials over {len(tuning_queries)} questions. "
+                        "This sends repeated requests to your configured model..."
+                    ):
+                        tuning_result = run_parameter_optimization(
+                            orchestrator,
+                            queries=tuning_queries,
+                            n_trials=int(optimizer_trials),
+                            min_quality_score=float(quality_floor),
+                        )
+                    st.session_state["last_parameter_optimization"] = tuning_result
+                except (RuntimeError, ValueError) as exc:
+                    st.error(str(exc))
+
+        if "last_parameter_optimization" in st.session_state:
+            tuning_result = st.session_state["last_parameter_optimization"]
+            if tuning_result["feasible"]:
+                best = tuning_result["recommended"]
+                st.success(
+                    f"Recommended trial {best['trial']}: quality {best['avg_quality_score']:.2f}, "
+                    f"energy {best['total_energy_kwh']:.8f} kWh."
+                )
+                st.write({
+                    "complexity_threshold": best["complexity_threshold"],
+                    "cache_similarity_threshold": best["cache_similarity_threshold"],
+                    "quality_floor": tuning_result["min_quality_score"],
+                })
+            else:
+                best_quality = tuning_result["best_quality_trial"]
+                st.warning(
+                    "No tested settings met the quality floor. "
+                    f"The highest measured score was {best_quality['avg_quality_score']:.2f}; "
+                    "lower the floor only if that reflects your evaluation requirements."
+                )
+            if any(row["contains_simulated_results"] for row in tuning_result["trials"]):
+                st.warning("At least one trial used simulated model output; do not present its energy result as a live measurement.")
+            st.caption(tuning_result["quality_metric_note"])
+            st.dataframe(pd.DataFrame(tuning_result["trials"]), use_container_width=True, hide_index=True)
+
+        # Restore the latest persisted run after a Streamlit restart.
+        if "last_benchmark" not in st.session_state:
+            saved_runs = orchestrator.db.get_all_benchmark_results()
+            if saved_runs:
+                latest_run_id = saved_runs[0]["run_id"]
+                mode_summaries = {}
+                for saved in saved_runs:
+                    if saved["run_id"] != latest_run_id:
+                        continue
+                    summary = dict(saved)
+                    summary["total_emissions_g"] = summary["total_emissions_kg"] * 1000.0
+                    summary["cache_hit_rate_pct"] = (
+                        round(summary["cache_hits"] / summary["total_queries"] * 100.0, 1)
+                        if summary["total_queries"] else 0.0
+                    )
+                    mode_summaries[summary["mode"]] = summary
+                baseline = mode_summaries.get(ExecutionMode.STANDARD_RAG, {})
+                green = mode_summaries.get(ExecutionMode.GREENROUTING, {})
+                comparative = {}
+                if baseline and green:
+                    comparative = {
+                        "energy_savings_pct": round((baseline["total_energy_kwh"] - green["total_energy_kwh"]) / baseline["total_energy_kwh"] * 100.0, 2) if baseline["total_energy_kwh"] else 0.0,
+                        "latency_reduction_pct": round((baseline["avg_latency_sec"] - green["avg_latency_sec"]) / baseline["avg_latency_sec"] * 100.0, 2) if baseline["avg_latency_sec"] else 0.0,
+                        "quality_retained_pct": round(green["avg_quality_score"] / baseline["avg_quality_score"] * 100.0, 2) if baseline["avg_quality_score"] else 100.0,
+                    }
+                st.session_state["last_benchmark"] = {
+                    "run_id": latest_run_id,
+                    "mode_summaries": mode_summaries,
+                    "comparative_analysis": comparative,
+                    "summary_df": pd.DataFrame(list(mode_summaries.values())),
+                    "detailed_records_df": pd.DataFrame(),
+                }
+
+        # Display benchmark results if present in session state or database
+        if "last_benchmark" in st.session_state:
+            bench_data = st.session_state["last_benchmark"]
+            comp = bench_data["comparative_analysis"]
+            summary_df = bench_data["summary_df"]
+            comparison_df = build_comparison_frame(summary_df)
+            records_df = bench_data["detailed_records_df"]
+
+            st.divider()
+            st.markdown("### 🏆 GreenRouting Comparative Performance vs Baseline")
+
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            kpi1.metric("⚡ Energy Savings", f"{comp.get('energy_savings_pct', 0.0)}%", delta=f"{comp.get('energy_savings_pct', 0.0)}%")
+            kpi2.metric("⏱️ Latency Reduction", f"{comp.get('latency_reduction_pct', 0.0)}%", delta=f"{comp.get('latency_reduction_pct', 0.0)}%")
+            kpi3.metric("🎯 Quality Retained", f"{comp.get('quality_retained_pct', 100.0)}%")
+            greenrouting_sum = bench_data["mode_summaries"].get(ExecutionMode.GREENROUTING, {})
+            kpi4.metric("🔄 Cache Hit Rate", f"{greenrouting_sum.get('cache_hit_rate_pct', 0.0)}%")
+
+            # Visualizations with Plotly
+            st.markdown("#### 📈 Comparative Analytics")
+            g1, g2 = st.columns(2)
+
+            with g1:
+                fig_energy = px.bar(
+                    summary_df,
+                    x="mode",
+                    y="total_energy_kwh",
+                    color="mode",
+                    title="Total Energy Consumption (kWh) — Lower is Better",
+                    labels={"total_energy_kwh": "Energy (kWh)", "mode": "Pipeline Mode"},
+                    color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"]
+                )
+                fig_energy.update_layout(showlegend=False)
+                st.plotly_chart(fig_energy, use_container_width=True)
+
+            with g2:
+                fig_emissions = px.bar(
+                    summary_df,
+                    x="mode",
+                    y="total_emissions_g",
+                    color="mode",
+                    title="Estimated Carbon Footprint (g CO₂eq) — Lower is Better",
+                    labels={"total_emissions_g": "Emissions (g CO₂eq)", "mode": "Pipeline Mode"},
+                    color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"]
+                )
+                fig_emissions.update_layout(showlegend=False)
+                st.plotly_chart(fig_emissions, use_container_width=True)
+
+            g3, g4 = st.columns(2)
+            with g3:
+                fig_lat = px.bar(
+                    summary_df,
+                    x="mode",
+                    y="avg_latency_sec",
+                    color="mode",
+                    title="Average Response Latency (seconds) — Lower is Better",
+                    labels={"avg_latency_sec": "Latency (s)", "mode": "Pipeline Mode"},
+                    color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"]
+                )
+                fig_lat.update_layout(showlegend=False)
+                st.plotly_chart(fig_lat, use_container_width=True)
+
+            with g4:
+                fig_qual = px.bar(
+                    summary_df,
+                    x="mode",
+                    y="avg_grounding_score",
+                    color="mode",
+                    title="Answer Grounding Quality Score (0 - 1.0) — Maintained",
+                    labels={"avg_grounding_score": "Grounding Score", "mode": "Pipeline Mode"},
+                    color_discrete_sequence=["#457b9d", "#457b9d", "#2a9d8f"]
+                )
+                fig_qual.update_layout(showlegend=False)
+                st.plotly_chart(fig_qual, use_container_width=True)
+
+            st.markdown("#### 🎯 Quality–Carbon Trade-off")
+            fig_quality_carbon = px.scatter(
+                comparison_df,
+                x="carbon_g",
+                y="quality_pct",
+                text="mode",
+                size="total_queries",
+                color="mode",
+                title="Answer Quality vs Carbon Footprint — Higher quality and lower carbon is preferred",
+                labels={
+                    "carbon_g": "Carbon (g CO₂eq)",
+                    "quality_pct": "Average Quality (%)",
+                    "mode": "Pipeline Mode",
+                },
+                color_discrete_sequence=["#e63946", "#f4a261", "#2a9d8f"],
+            )
+            fig_quality_carbon.update_traces(textposition="top center")
+            fig_quality_carbon.update_layout(showlegend=False)
+            st.plotly_chart(fig_quality_carbon, use_container_width=True)
+
+            st.markdown("#### 📋 Quality, Cost, and Savings Summary")
+            comparison_columns = [
+                "mode",
+                "quality_pct",
+                "grounding_pct",
+                "avg_latency_sec",
+                "cache_hit_rate_pct",
+                "total_energy_kwh",
+                "carbon_g",
+                "energy_savings_vs_standard_pct",
+                "carbon_savings_vs_standard_pct",
+            ]
+            st.dataframe(
+                comparison_df[comparison_columns].rename(
+                    columns={
+                        "mode": "Mode",
+                        "quality_pct": "Quality (%)",
+                        "grounding_pct": "Grounding (%)",
+                        "avg_latency_sec": "Avg Latency (s)",
+                        "cache_hit_rate_pct": "Cache Hits (%)",
+                        "total_energy_kwh": "Energy (kWh)",
+                        "carbon_g": "Carbon (g CO₂eq)",
+                        "energy_savings_vs_standard_pct": "Energy Savings vs Standard (%)",
+                        "carbon_savings_vs_standard_pct": "Carbon Savings vs Standard (%)",
+                    }
+                ),
+                use_container_width=True,
+            )
+            st.caption(
+                "Interpretation: the strongest result lowers energy/carbon while keeping answer quality and grounding comparable. "
+                "Negative savings are preserved as observed measurements rather than hidden."
+            )
+
+            st.markdown("#### 📄 Detailed Query Execution Records")
+            if records_df.empty:
+                st.info("Per-query details are available immediately after a run; saved history contains mode summaries.")
+            else:
+                st.dataframe(records_df, use_container_width=True)
+
+            # CSV Export
+            csv_data = records_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Export Benchmark Results to CSV",
+                data=csv_data,
+                file_name=f"greenrouting_benchmark_{bench_data['run_id']}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+
+    with custom_tab:
+        st.subheader("Custom Document Benchmark")
+        st.markdown(
+            "Compare Standard RAG, RAG with Cache, and GreenRouting on one document using your own question and a paraphrase. "
+            "Both prompts run in order during one comparison."
+        )
+        st.info(
+            "The first prompt normally misses in the cache modes. The paraphrase may hit only if the first answer passes "
+            "quality checks and the paraphrase is sufficiently similar. Standard RAG never uses cache. "
+            "Document-wide summary requests bypass semantic caching."
+        )
+        source_kind = st.radio(
+            "Choose document source",
+            ["Select indexed document", "Upload and index a document"],
+            horizontal=True,
+            key="custom_benchmark_source_kind",
+        )
+        selected_doc_id = None
+        selected_doc_label = None
+        uploaded_custom_doc = None
+        indexed_documents = []
+        if source_kind == "Select indexed document":
+            indexed_documents = orchestrator.db.get_all_documents()
+            if not indexed_documents:
+                st.warning("No indexed documents yet. Upload one in Document Knowledge Base or choose the upload option here.")
+            else:
+                document_options = {
+                    f"{doc['filename']} ({doc['total_chunks']} chunks, ID {doc['doc_id']})": doc["doc_id"]
+                    for doc in indexed_documents
+                }
+                selected_doc_label = st.selectbox(
+                    "Document to benchmark",
+                    list(document_options),
+                    key="custom_benchmark_document",
+                )
+                selected_doc_id = document_options[selected_doc_label]
         else:
-            st.dataframe(records_df, use_container_width=True)
+            uploaded_custom_doc = st.file_uploader(
+                "Choose a PDF, TXT, or Markdown file",
+                type=["pdf", "txt", "md"],
+                key="custom_benchmark_upload",
+            )
+            st.caption("Uploaded files are added to Document Knowledge Base and remain indexed until you delete them there.")
 
-        # CSV Export
-        csv_data = records_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Export Benchmark Results to CSV",
-            data=csv_data,
-            file_name=f"greenrouting_benchmark_{bench_data['run_id']}.csv",
-            mime="text/csv",
-            use_container_width=True
+        custom_question = st.text_input(
+            "Question",
+            placeholder="e.g. What is the main objective described in the document?",
+            key="custom_benchmark_question",
+        )
+        custom_paraphrase = st.text_input(
+            "Paraphrase for cache test",
+            placeholder="Ask the same thing using different wording",
+            key="custom_benchmark_paraphrase",
+        )
+        st.caption("Use a factual or analytical question. A whole-document summary follows a separate path and bypasses semantic cache.")
+        run_custom_bench = st.button(
+            "Run Custom Comparison",
+            type="primary",
+            use_container_width=True,
+            disabled=(source_kind == "Select indexed document" and not indexed_documents),
+            key="run_custom_benchmark",
         )
 
+        if run_custom_bench:
+            if not custom_question.strip() or not custom_paraphrase.strip():
+                st.error("Enter both a question and its paraphrase.")
+            elif custom_question.strip().casefold() == custom_paraphrase.strip().casefold():
+                st.error("The paraphrase must use different wording from the original question.")
+            elif source_kind == "Upload and index a document" and uploaded_custom_doc is None:
+                st.error("Choose a document to upload.")
+            else:
+                try:
+                    if source_kind == "Upload and index a document":
+                        indexed = orchestrator.process_and_index_document(
+                            uploaded_custom_doc.name,
+                            uploaded_custom_doc.getvalue(),
+                        )
+                        selected_doc_id = indexed["doc_id"]
+                        selected_doc_label = (
+                            f"{indexed['filename']} ({indexed['total_chunks']} chunks, ID {indexed['doc_id']})"
+                        )
+                        if indexed.get("duplicate"):
+                            st.info("This file was already indexed; reusing its existing document entry.")
+                        else:
+                            st.success(f"Indexed {indexed['filename']} for this comparison.")
+                    if not orchestrator.db.get_document_chunks(selected_doc_id):
+                        st.error("The selected document has no indexed text chunks to benchmark.")
+                    else:
+                        prompts = [custom_question.strip(), custom_paraphrase.strip()]
+                        with st.spinner("Running both prompts through all three strategies. This may take a few minutes..."):
+                            custom_result = BenchmarkRunner(orchestrator).run_benchmark(
+                                queries=prompts,
+                                active_doc_id=selected_doc_id,
+                                include_answers=True,
+                            )
+                        st.session_state["last_custom_benchmark"] = {
+                            "result": custom_result,
+                            "document_label": selected_doc_label,
+                            "queries": prompts,
+                        }
+                        st.success("Custom comparison completed. Your existing semantic cache was restored afterward.")
+                except (RuntimeError, ValueError) as exc:
+                    st.error(f"Could not run the custom comparison: {exc}")
+
+        if "last_custom_benchmark" in st.session_state:
+            custom_saved = st.session_state["last_custom_benchmark"]
+            custom_result = custom_saved["result"]
+            st.markdown(f"#### Results for {custom_saved['document_label']}")
+            custom_records = custom_result["detailed_records_df"]
+            summary_columns = [
+                "mode", "query_index", "query", "cache_status", "cache_validation_reason",
+                "model_used", "latency_seconds", "quality_score", "grounding_score",
+                "energy_kwh", "emissions_g", "is_simulated",
+            ]
+            st.dataframe(
+                custom_records[summary_columns].rename(columns={
+                    "mode": "Strategy", "query_index": "Prompt #", "query": "Prompt",
+                    "cache_status": "Cache", "cache_validation_reason": "Cache explanation",
+                    "model_used": "Model", "latency_seconds": "Latency (s)",
+                    "quality_score": "Quality", "grounding_score": "Grounding",
+                    "energy_kwh": "Energy (kWh)", "emissions_g": "Carbon (g CO2e)",
+                    "is_simulated": "Simulated",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+            for record in custom_records.to_dict("records"):
+                with st.expander(f"{record['mode']} ? Prompt {record['query_index']}: {record['query']}"):
+                    st.markdown("**Answer**")
+                    st.write(record.get("answer") or "No answer text was returned.")
+                    st.caption(
+                        f"Cache: {record.get('cache_status') or 'N/A'} ? "
+                        f"{record.get('cache_validation_reason') or 'No cache explanation returned.'}"
+                    )
+            if custom_records["is_simulated"].any():
+                st.warning("Some outputs used offline simulation. Treat these as functional checks, not live model measurements.")
 # -------------------------------------------------------------
 # TAB 5: ARCHITECTURE & METHODOLOGY
 # -------------------------------------------------------------

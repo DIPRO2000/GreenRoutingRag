@@ -94,7 +94,7 @@ The workflow separates document ingestion from question answering. Ingestion bui
 | Energy and carbon | Configured CPU/GPU power profiles and elapsed generation time | Calculates modeled energy and CO₂e with a configured grid-emissions factor. It does not read hardware power sensors or a live electricity-grid API. |
 | Benchmark and tuning | pandas, Plotly, Optuna | Compares the three execution strategies and offers a bounded experimental search over routing and cache thresholds, subject to a minimum heuristic quality score. |
 
-The default retrieval and routing configuration uses `top_k_retrieval = 3`, a routing complexity threshold of `0.50`, a semantic-cache similarity threshold of `0.88`, and a minimum acceptable quality score of `0.55`. These are configurable starting values, not universal settings.
+The default retrieval and routing configuration uses `top_k_retrieval = 3`, a routing complexity threshold of `0.50`, a semantic-cache similarity threshold of `0.70`, and a minimum acceptable quality score of `0.55`. These are configurable starting values, not universal settings.
 
 The energy model converts power and elapsed generation time into an estimate:
 

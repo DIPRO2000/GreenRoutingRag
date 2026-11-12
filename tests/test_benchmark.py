@@ -63,6 +63,43 @@ def test_benchmark_runner_execution(test_orchestrator):
     assert Path(exported).stat().st_size > 0
 
 
+def test_custom_benchmark_records_answers_for_selected_document(test_orchestrator, monkeypatch):
+    orch, _ = test_orchestrator
+    doc_id = orch.db.get_all_documents()[0]["doc_id"]
+    calls = []
+
+    def fake_execute_query(query, mode, active_doc_id=None):
+        calls.append((query, mode, active_doc_id))
+        return {
+            "answer": f"Answer to {query}",
+            "cache_status": "MISS",
+            "cache_validation_reason": "No similar cached answer",
+            "model_used": "test-model",
+            "is_simulated": False,
+            "complexity_score": 0.2,
+            "latency_seconds": 0.1,
+            "energy_kwh": 0.00001,
+            "emissions_g": 0.001,
+            "grounding_score": 0.8,
+            "quality_score": 0.7,
+            "retry_count": 0,
+        }
+
+    monkeypatch.setattr(orch, "execute_query", fake_execute_query)
+    result = BenchmarkRunner(orch).run_benchmark(
+        queries=["How many panels?", "What is the panel count?"],
+        active_doc_id=doc_id,
+        include_answers=True,
+    )
+
+    records = result["detailed_records_df"].to_dict("records")
+    assert len(calls) == 6  # Two ordered prompts for each of three modes.
+    assert all(call[2] == doc_id for call in calls)
+    assert [call[0] for call in calls[:2]] == ["How many panels?", "What is the panel count?"]
+    assert records[0]["answer"] == "Answer to How many panels?"
+    assert records[0]["cache_validation_reason"] == "No similar cached answer"
+
+
 def test_benchmark_restores_user_cache_even_when_run_fails(test_orchestrator, monkeypatch):
     orch, _ = test_orchestrator
     orch.db.insert_cache_entry(

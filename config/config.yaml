@@ -40,7 +40,7 @@ routing:
 caching:
   enabled: true
   # Similarity threshold for semantic cache hit
-  semantic_similarity_threshold: 0.88
+  semantic_similarity_threshold: 0.70
   # Quality-aware validation options
   enforce_document_context_match: true
   min_cache_grounding_score: 0.60

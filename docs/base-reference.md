@@ -32,7 +32,7 @@ Modern Large Language Models (LLMs) used in standard Retrieval-Augmented Generat
                                         │
                  ┌──────────────────────▼──────────────────────┐
                  │       Quality-Aware Semantic Cache          │
-                 │  - Cosine Vector Similarity (>= 0.88)       │
+                 │  - Cosine Vector Similarity (>= 0.70)       │
                  │  - Document Context Match (Hash / Doc ID)   │
                  │  - Source Context Support Verification      │
                  │  - Cache Age & Grounding Quality Threshold  │
@@ -108,7 +108,7 @@ $$\text{Model Routing Rule} = \begin{cases} \text{Lightweight Model} & \text{if 
 
 ### 2. Multi-Layer Cache Validation Protocol
 Unlike conventional semantic caches that accept entries solely on vector cosine similarity, EcoWeave strictly enforces:
-1. **Vector Cosine Similarity Check**: $\cos(\mathbf{q}_{\text{new}}, \mathbf{q}_{\text{cached}}) \ge \theta_{\text{sim}}$ (default 0.88).
+1. **Vector Cosine Similarity Check**: $\cos(\mathbf{q}_{\text{new}}, \mathbf{q}_{\text{cached}}) \ge \theta_{\text{sim}}$ (default 0.70).
 2. **Context Compatibility Check**: Confirms that the cached entry references document IDs/hashes currently loaded in the active corpus. Cross-document hallucination is rejected (`HIT_REJECTED_CONTEXT_MISMATCH`).
 3. **Source Support Check**: Validates that retrieved chunks corroborate key entities and terms in the cached answer (`HIT_REJECTED_UNSUPPORTED`).
 4. **Freshness & Staleness Check**: Rejects cache entries exceeding the maximum age threshold (`HIT_REJECTED_STALE`).

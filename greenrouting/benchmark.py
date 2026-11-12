@@ -73,13 +73,14 @@ class BenchmarkRunner:
         self,
         queries: Optional[List[str]] = None,
         modes: Optional[List[str]] = None,
-        active_doc_id: Optional[str] = None
+        active_doc_id: Optional[str] = None,
+        include_answers: bool = False,
     ) -> Dict[str, Any]:
         """Run in a temporary semantic-cache state and restore user cache afterward."""
         cache_store = self.orchestrator.semantic_cache.storage
         cache_snapshot = cache_store.snapshot_cache_rows()
         try:
-            return self._run_benchmark(queries, modes, active_doc_id)
+            return self._run_benchmark(queries, modes, active_doc_id, include_answers)
         finally:
             cache_store.restore_cache_rows(cache_snapshot)
 
@@ -87,7 +88,8 @@ class BenchmarkRunner:
         self,
         queries: Optional[List[str]] = None,
         modes: Optional[List[str]] = None,
-        active_doc_id: Optional[str] = None
+        active_doc_id: Optional[str] = None,
+        include_answers: bool = False,
     ) -> Dict[str, Any]:
         """
         Execute full benchmark suite across specified modes using real queries and real measurements.
@@ -142,7 +144,7 @@ class BenchmarkRunner:
                 else:
                     capable_count += 1
 
-                all_query_records.append({
+                query_record = {
                     "run_id": run_id,
                     "query_index": q_idx,
                     "query": q,
@@ -157,7 +159,11 @@ class BenchmarkRunner:
                     "grounding_score": res.get("grounding_score"),
                     "quality_score": res.get("quality_score"),
                     "retry_count": res.get("retry_count", 0)
-                })
+                }
+                if include_answers:
+                    query_record["answer"] = res.get("answer", "")
+                    query_record["cache_validation_reason"] = res.get("cache_validation_reason", "")
+                all_query_records.append(query_record)
 
             n = len(test_queries)
             avg_lat = sum(latencies) / n if n > 0 else 0.0

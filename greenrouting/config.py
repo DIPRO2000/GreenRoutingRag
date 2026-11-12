@@ -55,7 +55,7 @@ class RoutingConfig:
 @dataclass
 class CachingConfig:
     enabled: bool = True
-    semantic_similarity_threshold: float = 0.88
+    semantic_similarity_threshold: float = 0.70
     enforce_document_context_match: bool = True
     min_cache_grounding_score: float = 0.60
     max_cache_age_hours: int = 72
@@ -130,7 +130,7 @@ def load_settings(custom_path: Path = None) -> Settings:
         ),
         caching=CachingConfig(
             enabled=caching_data.get("enabled", True),
-            semantic_similarity_threshold=caching_data.get("semantic_similarity_threshold", 0.88),
+            semantic_similarity_threshold=caching_data.get("semantic_similarity_threshold", 0.70),
             enforce_document_context_match=caching_data.get("enforce_document_context_match", True),
             min_cache_grounding_score=caching_data.get("min_cache_grounding_score", 0.60),
             max_cache_age_hours=caching_data.get("max_cache_age_hours", 72),

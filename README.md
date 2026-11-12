@@ -10,7 +10,7 @@ The main idea is simple: do not use the biggest AI model for every question. Fir
 
 > **New team member?** Start with the command-by-command [setup manual](SETUP.md).
 
-> **Docker option:** with Docker Desktop and Ollama running, use `docker compose up --build -d`; see the setup manual for details.
+> **Docker option:** follow the [Docker run guide](docker.md) for Ollama setup, Docker Compose commands, and troubleshooting.
 
 ## Problem We Are Solving
 

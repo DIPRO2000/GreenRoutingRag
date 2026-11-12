@@ -75,7 +75,7 @@ def test_optimizer_selects_lowest_energy_trial_meeting_quality_floor_and_restore
     assert result["recommended"]["cache_similarity_threshold"] == 0.95
     assert result["recommended"]["avg_quality_score"] == 0.6
     assert settings.routing.complexity_threshold == 0.50
-    assert settings.caching.semantic_similarity_threshold == 0.88
+    assert settings.caching.semantic_similarity_threshold == 0.70
 
 
 def test_optimizer_reports_when_no_trial_meets_quality_floor():

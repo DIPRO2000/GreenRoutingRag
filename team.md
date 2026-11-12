@@ -82,7 +82,7 @@ The current orchestrator already returns most of this data. Workstreams should p
 | `prompt_tokens` / `output_tokens` | Ollama counts or clearly labelled estimates. |
 | `energy_kwh` | Measured or modelled energy, with method label. |
 | `emissions_g` | Estimated grams of CO2e. |
-| `measurement_label` | `Direct Hardware Sensor`, `Modeled TDP Estimate`, or `Simulation`. |
+| `measurement_label` | `Modeled TDP Estimate`, `Cache Reuse`, or `N/A`. |
 | `grounding_score` / `quality_score` | Heuristic evaluation scores, not proof of factual correctness. |
 
 ## Workstream 1 — Base Stabilisation, Documents, and RAG

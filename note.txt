@@ -75,3 +75,19 @@ The honest innovation claim should be:
 > The individual techniques already exist, but GreenRouting combines document-grounded retrieval, semantic caching, adaptive model selection, quality safeguards, and carbon measurement into one locally measurable system.
 
 That combined quality-versus-energy evaluation is what gives the project value.
+
+
+
+
+1. **Adaptive Green Routing** — **Partly implemented.** Python and Ollama routing are implemented; Scikit-learn-based routing is not.
+2. **Quality-Aware Caching** — **Partly implemented.** Semantic cache validation and Sentence Transformers are implemented; Redis is not used.
+3. **Energy-Aware Retrieval** — **Partly implemented.** Retrieval optimization and FAISS are implemented; LangChain and ChromaDB are not used.
+4. **Carbon-Aware Model Selection** — **Not implemented as described.** Model routing exists, but CodeCarbon and Electricity Maps integration do not.
+5. **Quality-Constrained Optimization** — **Partly implemented.** Quality checks and routing retries exist; Optuna optimization is not implemented.
+6. **Comprehensive Benchmarking** — **Partly implemented.** Benchmarking, pandas, and dashboard charts exist; RAGAS and Matplotlib are not used.
+7. **Energy Monitoring** — **Implemented as a modeled estimate**, not direct hardware measurement.
+8. **Carbon Emission Tracking** — **Implemented as an estimate** using configured power assumptions and a fixed grid factor.
+9. **Semantic Caching** — **Implemented.**
+10. **Smaller Language Models** — **Implemented.** Ollama supports lightweight and capable model choices.
+11. **Retrieval Optimization** — **Implemented**, including adaptive retrieval depth.
+12. **Carbon Dashboard** — **Implemented** with estimated energy and CO₂e metrics and benchmark comparisons.

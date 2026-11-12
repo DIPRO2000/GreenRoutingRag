@@ -7,7 +7,7 @@ when answer quality checks indicate deficiency.
 import logging
 from typing import Dict, Any, List, Optional
 from greenrouting.config import ModelConfig, RoutingConfig
-from greenrouting.complexity_analyzer import ComplexityAnalyzer
+from greenrouting.ml_complexity_analyzer import ScikitLearnComplexityAnalyzer
 from greenrouting.quality_guard import QualityGuard
 from greenrouting.llm_interface import OllamaClient
 
@@ -21,7 +21,7 @@ class AdaptiveGreenRouter:
         self.llm_client = llm_client
         self.model_config = model_config
         self.routing_config = routing_config
-        self.complexity_analyzer = ComplexityAnalyzer(routing_config)
+        self.complexity_analyzer = ScikitLearnComplexityAnalyzer(routing_config)
         self.quality_guard = QualityGuard(routing_config)
 
     def route_and_execute(self, query: str, prompt: str, context_chunks: List[Dict[str, Any]],

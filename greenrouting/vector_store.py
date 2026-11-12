@@ -4,6 +4,7 @@ Manages Sentence-Transformers embeddings and FAISS / NumPy cosine similarity ind
 """
 import os
 import json
+import hashlib
 import logging
 import numpy as np
 from pathlib import Path
@@ -49,9 +50,10 @@ class DeterministicFallbackEmbedder:
                 continue
 
             for word in words:
-                h = hash(word)
-                idx = abs(h) % self.dimension
-                sign = 1.0 if (h % 2 == 0) else -1.0
+                digest = hashlib.blake2b(word.encode("utf-8"), digest_size=8).digest()
+                h = int.from_bytes(digest, byteorder="big", signed=False)
+                idx = h % self.dimension
+                sign = 1.0 if (h & 1) == 0 else -1.0
                 vec[idx] += sign
 
             if normalize_embeddings:
@@ -237,18 +239,24 @@ class FaissVectorStore:
 
         if self.use_faiss and self.faiss_index is not None:
             try:
-                k_search = min(top_k * 4 if doc_id_filter else top_k, self.faiss_index.ntotal)
-                scores, indices = self.faiss_index.search(query_vec.reshape(1, -1), k_search)
-                for score, idx in zip(scores[0], indices[0]):
-                    if idx < 0 or idx >= len(self.chunks):
-                        continue
-                    chunk = self.chunks[idx]
-                    if doc_id_filter and chunk.get("doc_id") != doc_id_filter:
-                        continue
-                    sim_score = float(max(-1.0, min(1.0, score)))
-                    results.append((chunk, sim_score))
-                    if len(results) >= top_k:
+                total_indexed = self.faiss_index.ntotal
+                k_search = min(top_k * 4 if doc_id_filter else top_k, total_indexed)
+                while k_search > 0:
+                    scores, indices = self.faiss_index.search(query_vec.reshape(1, -1), k_search)
+                    results = []
+                    for score, idx in zip(scores[0], indices[0]):
+                        if idx < 0 or idx >= len(self.chunks):
+                            continue
+                        chunk = self.chunks[idx]
+                        if doc_id_filter and chunk.get("doc_id") != doc_id_filter:
+                            continue
+                        sim_score = float(max(-1.0, min(1.0, score)))
+                        results.append((chunk, sim_score))
+                        if len(results) >= top_k:
+                            break
+                    if len(results) >= top_k or k_search >= total_indexed:
                         break
+                    k_search = min(total_indexed, max(k_search + 1, k_search * 2))
                 return results
             except Exception as e:
                 logger.warning("FAISS search encountered error: %s. Falling back to NumPy vector search.", e)

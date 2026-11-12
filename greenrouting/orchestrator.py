@@ -18,6 +18,7 @@ from greenrouting.cache_validator import CacheValidationStatus
 from greenrouting.energy_tracker import EnergyTracker
 from greenrouting.evaluator import RagEvaluator
 from greenrouting.retrieval_policy import choose_top_k
+from greenrouting.document_summarizer import DocumentSummarizer
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ class GreenRoutingOrchestrator:
         self.llm_client = OllamaClient(
             base_url=settings.models.ollama_base_url,
             enable_simulation_fallback=settings.models.enable_simulation_fallback
+        )
+        self.document_summarizer = DocumentSummarizer(
+            llm_client=self.llm_client,
+            model_name=settings.models.capable_model,
         )
         self.doc_processor = DocumentProcessor(
             chunk_size=settings.rag.chunk_size,
@@ -79,30 +84,125 @@ class GreenRoutingOrchestrator:
                 "filename": existing["filename"],
                 "total_chunks": existing["total_chunks"],
                 "total_characters": existing["total_characters"],
+                "page_count": doc_meta.get("page_count"),
+                "low_text_pages": doc_meta.get("low_text_pages", []),
                 "duplicate": True,
             }
-        
-        # Save to SQLite
-        self.db.save_document(
-            doc_id=doc_meta["doc_id"],
-            filename=doc_meta["filename"],
-            doc_hash=doc_meta["doc_hash"],
-            file_type=doc_meta["file_type"],
-            total_chunks=doc_meta["total_chunks"],
-            total_characters=doc_meta["total_characters"]
-        )
-        self.db.save_chunks(chunks)
 
-        # Add to Vector Store
-        self.vector_store.add_chunks(chunks)
+        try:
+            self.db.save_document(
+                doc_id=doc_meta["doc_id"],
+                filename=doc_meta["filename"],
+                doc_hash=doc_meta["doc_hash"],
+                file_type=doc_meta["file_type"],
+                total_chunks=doc_meta["total_chunks"],
+                total_characters=doc_meta["total_characters"]
+            )
+            self.db.save_chunks(chunks)
+            self.vector_store.add_chunks(chunks)
+        except Exception as exc:
+            try:
+                self.db.delete_document(doc_meta["doc_id"])
+                self.vector_store.rebuild(self.db.get_all_chunks())
+            except Exception as rollback_error:
+                logger.exception("Failed to roll back document '%s' after indexing failed.", filename)
+                raise RuntimeError(
+                    f"Indexing '{filename}' failed and its rollback also failed: {rollback_error}"
+                ) from exc
+            raise
 
         return {
             "doc_id": doc_meta["doc_id"],
             "filename": doc_meta["filename"],
             "total_chunks": doc_meta["total_chunks"],
             "total_characters": doc_meta["total_characters"],
+            "page_count": doc_meta.get("page_count"),
+            "low_text_pages": doc_meta.get("low_text_pages", []),
             "duplicate": False,
         }
+
+    def summarize_document(
+        self,
+        doc_id: str,
+        query_text: str = "Summarize this document.",
+        mode: str = ExecutionMode.GREENROUTING,
+    ) -> Dict[str, Any]:
+        """Summarize every stored chunk belonging to the selected document."""
+        chunks = self.db.get_document_chunks(doc_id)
+        summary_result = self.document_summarizer.summarize(chunks)
+        answer = summary_result["summary"]
+        energy = self.energy_tracker.track_operation(
+            operation_name="document_wide_summary",
+            latency_seconds=summary_result["latency_seconds"],
+            generation_runs=summary_result["generation_runs"],
+        )
+        quality = self.evaluator.evaluate(query_text, answer, chunks)
+        model_used = summary_result["model_used"]
+        sources = [
+            {
+                "source_index": index,
+                "chunk_id": chunk.get("chunk_id"),
+                "doc_id": chunk.get("doc_id"),
+                "page_number": chunk.get("page_number", 1),
+                "text_snippet": (
+                    chunk.get("text_content", "")[:250] + "..."
+                    if len(chunk.get("text_content", "")) > 250
+                    else chunk.get("text_content", "")
+                ),
+            }
+            for index, chunk in enumerate(chunks, start=1)
+        ]
+        summary_pages = sorted({source["page_number"] for source in sources if source["page_number"] is not None})
+        routing_reason = (
+            "Whole-document summaries use the configured capable model for each section and combine pass. "
+            "Cache reuse and adaptive routing are not applied to this summary path."
+        )
+        response = {
+            "answer": answer,
+            "query_text": query_text,
+            "mode": mode,
+            "model_used": model_used,
+            "is_simulated": summary_result["is_simulated"],
+            "is_document_summary": True,
+            "summary_call_count": summary_result["call_count"],
+            "cache_status": "BYPASSED",
+            "cache_validation_reason": "Document-wide summaries are generated from all chunks and are not cached.",
+            "complexity_score": 0.0,
+            "routing_reason": routing_reason,
+            "retry_count": 0,
+            "retrieval_top_k": len(chunks),
+            "retrieved_chunk_count": len(chunks),
+            "retrieval_reason": f"Processed all {len(chunks)} indexed chunks in bounded batches and combined their summaries.",
+            "retrieved_chunks": chunks,
+            "sources": sources,
+            "summary_pages": summary_pages,
+            "latency_seconds": energy["latency_seconds"],
+            "energy_kwh": energy["energy_kwh"],
+            "emissions_kg": energy["emissions_kg"],
+            "emissions_g": energy["emissions_g"],
+            "grounding_score": quality["groundedness"],
+            "quality_score": quality["composite_score"],
+            "measurement_label": energy["measurement_label"],
+            "energy_details": energy["details"],
+            "generation_details": energy.get("generation_details", []),
+        }
+        response["decision_trace"] = self._build_decision_trace(
+            cache_status=response["cache_status"],
+            cache_reason=response["cache_validation_reason"],
+            retrieval_top_k=len(chunks),
+            retrieved_chunk_count=len(chunks),
+            retrieval_reason=response["retrieval_reason"],
+            model_used=model_used,
+            complexity_score=0.0,
+            routing_reason=routing_reason,
+            retry_count=0,
+            energy_kwh=energy["energy_kwh"],
+            emissions_g=energy["emissions_g"],
+            latency_seconds=energy["latency_seconds"],
+            measurement_label=energy["measurement_label"],
+        )
+        self._log_execution(response)
+        return response
 
     def delete_document(self, doc_id: str) -> Dict[str, Any]:
         """Delete one document and rebuild the vector index from remaining DB chunks."""
@@ -119,12 +219,14 @@ class GreenRoutingOrchestrator:
             }
 
         previous_chunks = self.db.get_all_chunks()
+        remaining_chunks = [chunk for chunk in previous_chunks if chunk.get("doc_id") != doc_id]
+        # Build the new index before committing the document deletion. If embedding
+        # or index construction fails, the document remains available in SQLite.
+        self.vector_store.rebuild(remaining_chunks)
         try:
             deletion = self.db.delete_document(doc_id)
-            remaining_chunks = self.db.get_all_chunks()
-            self.vector_store.rebuild(remaining_chunks)
+            self.semantic_cache.storage.invalidate_document(doc_id)
         except Exception:
-            # Restore the index from the pre-delete snapshot when rebuilding fails.
             self.vector_store.rebuild(previous_chunks)
             raise
 
@@ -186,6 +288,7 @@ class GreenRoutingOrchestrator:
                 "answer": "No relevant documents found. Please upload and index documents first.",
                 "mode": mode,
                 "model_used": "None",
+                "is_simulated": False,
                 "cache_status": CacheValidationStatus.MISS,
                 "cache_validation_reason": "No documents indexed.",
                 "complexity_score": 0.0,
@@ -227,14 +330,10 @@ class GreenRoutingOrchestrator:
         cached_answer = None
 
         if mode in [ExecutionMode.RAG_WITH_CACHE, ExecutionMode.GREENROUTING]:
-            # For standard RAG with cache, pass no doc_ids to simulate naive caching
-            eval_doc_ids = active_doc_ids if mode == ExecutionMode.GREENROUTING else None
-            eval_chunks = retrieved_chunks if mode == ExecutionMode.GREENROUTING else None
-
             cache_result = self.semantic_cache.lookup(
                 query=query,
-                current_doc_ids=eval_doc_ids,
-                retrieved_chunks=eval_chunks
+                current_doc_ids=active_doc_ids,
+                retrieved_chunks=retrieved_chunks
             )
             cache_status = cache_result["status"]
             cache_reason = cache_result["validation_reason"]
@@ -257,6 +356,7 @@ class GreenRoutingOrchestrator:
                 "query_text": query,
                 "mode": mode,
                 "model_used": "Cached Response (Zero LLM Inference)",
+                "is_simulated": False,
                 "cache_status": cache_status,
                 "cache_validation_reason": cache_reason,
                 "complexity_score": 0.0,
@@ -315,6 +415,7 @@ class GreenRoutingOrchestrator:
             retry_count = router_result["retry_count"]
             gen_latency = router_result["latency_seconds"]
             generation_runs = router_result.get("generation_runs", [])
+            is_simulated = bool(router_result.get("is_simulated", False))
         else:
             # Standard RAG: Always use capable model
             model_used = self.settings.models.capable_model
@@ -324,6 +425,7 @@ class GreenRoutingOrchestrator:
                 system_prompt=RAG_SYSTEM_PROMPT
             )
             final_answer = gen_result.get("answer", "")
+            is_simulated = bool(gen_result.get("is_simulated", False))
             gen_latency = gen_result.get("latency_seconds", 0.0)
             generation_runs = [{
                 "model_name": model_used,
@@ -356,7 +458,10 @@ class GreenRoutingOrchestrator:
             self.semantic_cache.store(
                 query=query,
                 answer=final_answer,
-                source_doc_ids=active_doc_ids,
+                source_doc_ids=sorted({
+                    chunk.get("doc_id") for chunk in retrieved_chunks
+                    if chunk.get("doc_id")
+                }),
                 source_chunks=retrieved_chunks,
                 model_used=model_used,
                 grounding_score=grounding_score
@@ -367,6 +472,7 @@ class GreenRoutingOrchestrator:
             "query_text": query,
             "mode": mode,
             "model_used": model_used,
+            "is_simulated": is_simulated,
             "cache_status": cache_status,
             "cache_validation_reason": cache_reason,
             "complexity_score": complexity_score,

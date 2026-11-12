@@ -40,17 +40,15 @@ routing:
 caching:
   enabled: true
   # Similarity threshold for semantic cache hit
-  semantic_similarity_threshold: 0.88
+  semantic_similarity_threshold: 0.70
   # Quality-aware validation options
   enforce_document_context_match: true
   min_cache_grounding_score: 0.60
   max_cache_age_hours: 72
+  redis_url: "redis://localhost:6379/0"
 
 energy:
-  tracking_mode: "auto" # "auto", "codecarbon", or "modeled"
-  country_iso_code: "IND"
-  offline_mode: true
-  # Fallback TDP wattage assumptions for CPU/GPU if direct sensor unavailable
+  # Modeled TDP assumptions; this project does not read hardware power sensors.
   cpu_tdp_watts: 45.0
   gpu_tdp_watts: 75.0
   emission_factor_kg_per_kwh: 0.708 # Grid average emission factor (kg CO2 / kWh)

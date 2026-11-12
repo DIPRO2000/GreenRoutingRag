@@ -10,6 +10,8 @@ The main idea is simple: do not use the biggest AI model for every question. Fir
 
 > **New team member?** Start with the command-by-command [setup manual](SETUP.md).
 
+> **Docker option:** follow the [Docker run guide](docker.md) for Ollama setup, Docker Compose commands, and troubleshooting.
+
 ## Problem We Are Solving
 
 Normal RAG (Retrieval-Augmented Generation) systems generally run document search and an AI model for every question. In a college, office, or company, people often ask the same policy questions repeatedly in different words. This repeats computation, increases response time, and uses electricity unnecessarily.
@@ -81,11 +83,14 @@ We will **not** claim that a laptop is always greener than a cloud AI service. O
 | Streamlit | Creates the simple web interface and dashboard. |
 | Ollama | Runs AI language models locally on the laptop. |
 | Small and medium local models | Lets the router choose a lower- or higher-compute answer path. Examples: a 2–3B model and a 7B quantised model. |
+| scikit-learn | An experimental TF-IDF classifier routes queries by complexity; uncertain predictions fall back to the existing explainable rules. It starts with a small built-in labeled set, so it needs evaluation with real queries before claiming better routing. |
 | Sentence Transformers | Converts questions into numerical meaning vectors so similar questions can be recognised. |
 | FAISS | Fast local search for document chunks and cached questions/answers. |
+| Redis | Stores active semantic-cache entries for lookup; SQLite remains the durable source and fallback. Quality checks still validate each candidate before reuse. |
 | LangChain (light use) | Helps organise document loading, splitting, retrieval, and prompts. |
-| CodeCarbon | Estimates energy use and CO2e from local CPU/GPU/RAM activity. |
+| Energy tracker | Models energy and CO2e from configured CPU/GPU power assumptions and generation time. |
 | pandas | Stores and analyses query logs and benchmark results. |
+| Optuna | Runs an offline, quality-constrained search for routing and cache thresholds; recommendations are experimental and do not alter live settings. |
 | Matplotlib or Plotly | Creates charts for the dashboard/report. |
 | PyPDF / docx reader | Extracts text from PDFs and Word documents. |
 
@@ -148,7 +153,7 @@ The application can run without a powerful gaming GPU, but the experience become
 1. Define three paths: cache, small model, stronger model.
 2. Route based on cache confidence, retrieved-document confidence, and simple question rules.
 3. Record response time, chosen path, prompt/output length, and model name.
-4. Track local energy/CO2e using CodeCarbon where possible; label all results as estimates.
+4. Estimate energy/CO2e using configured CPU/GPU power assumptions; label all results as modeled estimates.
 
 ### Phase 4 — Dashboard and Benchmark
 
@@ -178,7 +183,7 @@ The application can run without a powerful gaming GPU, but the experience become
 These are valuable extensions but are not required for the first submission:
 
 - Live electricity-grid carbon intensity through Electricity Maps or a regional source.
-- Learned routing model instead of rule-based routing.
+- Train and validate the router on human-labeled query outcomes instead of the built-in starter examples.
 - Automated answer-quality evaluation using RAGAS.
 - Redis or a database for multiple users and larger caches.
 - Cache expiry, eviction policy, and user feedback on cached answers.
@@ -209,7 +214,7 @@ These are valuable extensions but are not required for the first submission:
 
 **How it can help us:**
 
-- Learn its CodeCarbon/energy-monitoring approach.
+- Review its energy-monitoring approach as background; this project currently uses its own modeled estimator.
 - Reuse or adapt small, clearly attributed parts only if needed.
 - Use it as a reference while we build a cleaner Streamlit application.
 

@@ -40,3 +40,45 @@ def test_invalid_extension():
 def test_chunk_overlap_validation():
     with pytest.raises(ValueError):
         DocumentProcessor(chunk_size=100, chunk_overlap=120)
+
+
+def test_pdf_processing_reports_low_and_empty_text_pages(monkeypatch):
+    class FakePage:
+        def __init__(self, text):
+            self.text = text
+
+        def extract_text(self):
+            return self.text
+
+    class FakePdfReader:
+        def __init__(self, _stream):
+            self.pages = [
+                FakePage("Readable page with enough text. " + "detail " * 12),
+                FakePage("Only a short heading."),
+                FakePage(""),
+                FakePage("x" * 80),
+            ]
+
+    monkeypatch.setattr("greenrouting.document_processor.PdfReader", FakePdfReader)
+    processor = DocumentProcessor()
+
+    metadata, chunks = processor.process_document("mixed.pdf", b"fake pdf", doc_id="mixed-pdf")
+
+    assert metadata["page_count"] == 4
+    assert metadata["low_text_pages"] == [2, 3]
+    assert {chunk["page_number"] for chunk in chunks} == {1, 2, 4}
+
+
+def test_fully_scanned_pdf_error_explains_ocr_is_unavailable(monkeypatch):
+    class FakePage:
+        def extract_text(self):
+            return ""
+
+    class FakePdfReader:
+        def __init__(self, _stream):
+            self.pages = [FakePage(), FakePage()]
+
+    monkeypatch.setattr("greenrouting.document_processor.PdfReader", FakePdfReader)
+
+    with pytest.raises(DocumentProcessorError, match="OCR is not available"):
+        DocumentProcessor().process_document("scanned.pdf", b"fake pdf")

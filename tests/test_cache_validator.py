@@ -109,3 +109,23 @@ def test_validator_rejects_unsupported_claims_against_new_chunks():
 
     assert is_valid is False
     assert status == CacheValidationStatus.HIT_REJECTED_UNSUPPORTED
+
+
+def test_validator_rejects_cache_when_retrieved_sources_differ_from_cached_sources():
+    validator = CacheQualityValidator(CachingConfig(semantic_similarity_threshold=0.85))
+    candidate = {
+        "answer_text": "Solar panels have high efficiency.",
+        "source_doc_ids": ["doc_solar"],
+        "grounding_score": 0.95,
+        "is_active": 1,
+    }
+
+    valid, status, _ = validator.validate_cache_candidate(
+        candidate_entry=candidate,
+        similarity_score=0.98,
+        current_doc_ids=["doc_solar", "doc_wind"],
+        retrieved_chunks=[{"doc_id": "doc_wind", "text_content": "Wind turbines generate renewable electricity."}],
+    )
+
+    assert valid is False
+    assert status == CacheValidationStatus.HIT_REJECTED_CONTEXT_MISMATCH

@@ -13,7 +13,7 @@ Modern Large Language Models (LLMs) used in standard Retrieval-Augmented Generat
 **EcoWeave** introduces a dual-action energy conservation framework:
 1. **Adaptive Green Model Routing**: Dynamically scores question complexity via multi-dimensional syntactic, lexical, and semantic heuristics to route queries between an ultra-lightweight language model (e.g., `Qwen 2.5 0.5B` or `Llama 3.2 1B` at ~25–35W TDP) and a capable model (e.g., `Llama 3.2 3B` or `Mistral 7B` at ~75–95W TDP). If a lightweight model produces an uncertain response or sub-par context grounding, a closed-loop **Quality Guard** automatically triggers an escalation retry with the capable model.
 2. **Quality-Aware Semantic Caching**: Employs vector similarity combined with multi-layer verification (document context scope, source chunk support alignment, staleness expiration, and grounding quality checks) to bypass LLM inference entirely when a validated response is available, achieving zero-LLM-inference energy savings.
-3. **Rigorous Energy & Carbon Accounting**: Integrates CodeCarbon and calibrated Thermal Design Power (TDP) engineering models to record real energy expenditures and carbon footprint, clearly distinguishing direct hardware telemetry from modeled estimates.
+3. **Energy & Carbon Estimates**: Uses configured Thermal Design Power (TDP) assumptions and elapsed generation time to produce modeled energy and carbon estimates. It does not read direct hardware telemetry.
 
 ---
 
@@ -32,7 +32,7 @@ Modern Large Language Models (LLMs) used in standard Retrieval-Augmented Generat
                                         │
                  ┌──────────────────────▼──────────────────────┐
                  │       Quality-Aware Semantic Cache          │
-                 │  - Cosine Vector Similarity (>= 0.88)       │
+                 │  - Cosine Vector Similarity (>= 0.70)       │
                  │  - Document Context Match (Hash / Doc ID)   │
                  │  - Source Context Support Verification      │
                  │  - Cache Age & Grounding Quality Threshold  │
@@ -80,7 +80,7 @@ Modern Large Language Models (LLMs) used in standard Retrieval-Augmented Generat
                                               ▼
                                  ┌─────────────────────────┐
                                  │   Energy & CO2 Logger   │
-                                 │    (CodeCarbon + TDP)   │
+                                 │   (Modeled TDP estimate)│
                                  └────────────┬────────────┘
                                               ▼
                                  ┌─────────────────────────┐
@@ -108,7 +108,7 @@ $$\text{Model Routing Rule} = \begin{cases} \text{Lightweight Model} & \text{if 
 
 ### 2. Multi-Layer Cache Validation Protocol
 Unlike conventional semantic caches that accept entries solely on vector cosine similarity, EcoWeave strictly enforces:
-1. **Vector Cosine Similarity Check**: $\cos(\mathbf{q}_{\text{new}}, \mathbf{q}_{\text{cached}}) \ge \theta_{\text{sim}}$ (default 0.88).
+1. **Vector Cosine Similarity Check**: $\cos(\mathbf{q}_{\text{new}}, \mathbf{q}_{\text{cached}}) \ge \theta_{\text{sim}}$ (default 0.70).
 2. **Context Compatibility Check**: Confirms that the cached entry references document IDs/hashes currently loaded in the active corpus. Cross-document hallucination is rejected (`HIT_REJECTED_CONTEXT_MISMATCH`).
 3. **Source Support Check**: Validates that retrieved chunks corroborate key entities and terms in the cached answer (`HIT_REJECTED_UNSUPPORTED`).
 4. **Freshness & Staleness Check**: Rejects cache entries exceeding the maximum age threshold (`HIT_REJECTED_STALE`).
@@ -133,7 +133,7 @@ $$\text{Carbon Footprint (kg CO}_2\text{eq)} = E_{\text{kWh}} \times \text{Grid 
 | **Vector Search** | FAISS / NumPy Cosine Engine | Fast similarity indexing & retrieval |
 | **Local LLM Engine** | Ollama | Local inference for lightweight and capable LLMs |
 | **Persistent Storage** | SQLite (`sqlite3`) | Metadata, cache entries, query logs, benchmark records |
-| **Carbon Tracking** | CodeCarbon | Empirical energy and carbon emission estimation |
+| **Carbon Tracking** | Local modeled estimator | Estimates energy from configured power assumptions and elapsed generation time |
 | **Analytics & Viz** | Pandas & Plotly | Data manipulation and interactive benchmark charts |
 | **Document Parsing** | PyPDF & Python I/O | Extraction and boundary-aware chunking |
 | **Test Suite** | Pytest | Automated verification of all modules |
@@ -210,7 +210,7 @@ EcoWeave/
 │   ├── adaptive_router.py      # Green routing logic & transparent explanations
 │   ├── cache_validator.py      # Multi-layer quality-aware cache validation
 │   ├── semantic_cache.py       # Vector cache lookup, storage, and invalidation
-│   ├── energy_tracker.py       # CodeCarbon & calibrated TDP energy tracking
+│   ├── energy_tracker.py       # Modeled TDP energy tracking
 │   ├── evaluator.py            # RAG quality metrics (groundedness, relevance)
 │   ├── benchmark.py            # Automated ablation benchmark & CSV exporter
 │   └── orchestrator.py         # Master pipeline coordinating all modules
@@ -255,7 +255,7 @@ EcoWeave features an integrated, reproducible benchmarking workflow comparing th
 ---
 
 ## 📜 Academic Integrity and Limitations
-- **Energy Measurement Distinction**: Direct hardware measurements via Intel RAPL or NVIDIA NVML are clearly tagged as `Direct Hardware Sensor`. In environments where hardware counters are unavailable, estimates are generated via CodeCarbon's regional TDP model and labeled as `Modeled TDP Estimate`. Metrics are never fabricated.
+- **Energy Measurement Distinction**: Energy values are modeled estimates derived from configured CPU/GPU power assumptions and elapsed time. The application does not read Intel RAPL, NVIDIA NVML, or CodeCarbon measurements.
 - **Model Fallbacks**: The deterministic simulation generator is designed for offline reproducibility and testing environments.
 
 ---
@@ -263,4 +263,4 @@ EcoWeave features an integrated, reproducible benchmarking workflow comparing th
 ## 👥 Authors and Acknowledgments
 - **Project Name:** EcoWeave
 - **Supervision:** Computer Science & Engineering Final-Year Project
-- Built with Python, Streamlit, LangChain concepts, Sentence-Transformers, FAISS, and CodeCarbon.
+- Built with Python, Streamlit, Sentence-Transformers, FAISS, and a local modeled energy estimator.

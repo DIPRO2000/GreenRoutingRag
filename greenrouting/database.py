@@ -5,8 +5,9 @@ Manages documents, semantic cache, query logs, and benchmark results.
 import sqlite3
 import json
 import logging
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Iterator, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,19 @@ class DatabaseManager:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_tables()
 
-    def get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def get_connection(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
 
     def init_tables(self) -> None:
         """Create schema if it does not exist."""
@@ -99,7 +109,7 @@ class DatabaseManager:
             # Benchmark Results table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS benchmark_results (
-                    run_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
                     benchmark_name TEXT NOT NULL,
                     mode TEXT NOT NULL,
                     total_queries INTEGER NOT NULL,
@@ -111,9 +121,51 @@ class DatabaseManager:
                     total_energy_kwh REAL NOT NULL,
                     total_emissions_kg REAL NOT NULL,
                     avg_grounding_score REAL NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    avg_quality_score REAL NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (run_id, mode)
                 )
             """)
+            benchmark_columns = cursor.execute("PRAGMA table_info(benchmark_results)").fetchall()
+            primary_key = [row["name"] for row in sorted(benchmark_columns, key=lambda row: row["pk"]) if row["pk"]]
+            if primary_key != ["run_id", "mode"]:
+                cursor.execute("ALTER TABLE benchmark_results RENAME TO benchmark_results_legacy")
+                cursor.execute("""
+                    CREATE TABLE benchmark_results (
+                        run_id TEXT NOT NULL,
+                        benchmark_name TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        total_queries INTEGER NOT NULL,
+                        cache_hits INTEGER NOT NULL,
+                        lightweight_count INTEGER NOT NULL,
+                        capable_count INTEGER NOT NULL,
+                        retry_count INTEGER NOT NULL,
+                        avg_latency_sec REAL NOT NULL,
+                        total_energy_kwh REAL NOT NULL,
+                        total_emissions_kg REAL NOT NULL,
+                        avg_grounding_score REAL NOT NULL,
+                        avg_quality_score REAL NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (run_id, mode)
+                    )
+                """)
+                legacy_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(benchmark_results_legacy)")}
+                # Older releases never stored answer quality, so do not infer it
+                # from grounding; preserve that history as unavailable (0).
+                quality_expr = "avg_quality_score" if "avg_quality_score" in legacy_columns else "0"
+                cursor.execute(f"""
+                    INSERT OR IGNORE INTO benchmark_results
+                    (run_id, benchmark_name, mode, total_queries, cache_hits, lightweight_count,
+                     capable_count, retry_count, avg_latency_sec, total_energy_kwh,
+                     total_emissions_kg, avg_grounding_score, avg_quality_score, created_at)
+                    SELECT run_id, benchmark_name, mode, total_queries, cache_hits, lightweight_count,
+                           capable_count, retry_count, avg_latency_sec, total_energy_kwh,
+                           total_emissions_kg, avg_grounding_score, {quality_expr}, created_at
+                    FROM benchmark_results_legacy
+                """)
+                cursor.execute("DROP TABLE benchmark_results_legacy")
+            elif "avg_quality_score" not in {row["name"] for row in benchmark_columns}:
+                cursor.execute("ALTER TABLE benchmark_results ADD COLUMN avg_quality_score REAL NOT NULL DEFAULT 0")
             conn.commit()
 
     # --- Document helpers ---
@@ -151,6 +203,22 @@ class DatabaseManager:
                 """
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_document_chunks(self, doc_id: str) -> List[Dict[str, Any]]:
+        """Return every stored chunk for one document, in original chunk order."""
+        if not doc_id:
+            return []
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT chunk_id, doc_id, chunk_index, text_content, page_number, character_count
+                FROM document_chunks
+                WHERE doc_id = ?
+                ORDER BY chunk_index ASC
+                """,
+                (doc_id,),
+            )
+            return [dict(row) for row in rows]
 
     def get_document_by_hash(self, doc_hash: str) -> Optional[Dict[str, Any]]:
         """Return the first indexed document with this content hash, if any."""
@@ -249,6 +317,28 @@ class DatabaseManager:
             conn.execute("DELETE FROM semantic_cache")
             conn.commit()
 
+    def snapshot_cache_rows(self) -> List[Dict[str, Any]]:
+        """Return raw cache rows, including inactive entries, for isolated benchmarks."""
+        with self.get_connection() as conn:
+            return [dict(row) for row in conn.execute("SELECT * FROM semantic_cache")]
+
+    def restore_cache_rows(self, rows: List[Dict[str, Any]]) -> None:
+        """Replace cache contents with a previously captured exact snapshot."""
+        columns = (
+            "cache_id, query_text, query_embedding_json, answer_text, source_doc_ids, "
+            "source_chunks_json, model_used, grounding_score, access_count, is_active, "
+            "created_at, last_accessed_at"
+        )
+        placeholders = ", ".join("?" for _ in columns.split(", "))
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM semantic_cache")
+            if rows:
+                conn.executemany(
+                    f"INSERT INTO semantic_cache ({columns}) VALUES ({placeholders})",
+                    [tuple(row[column.strip()] for column in columns.split(", ")) for row in rows],
+                )
+            conn.commit()
+
     # --- Query Logging ---
     def log_query(self, log_entry: Dict[str, Any]) -> int:
         with self.get_connection() as conn:
@@ -277,9 +367,9 @@ class DatabaseManager:
             conn.execute("""
                 INSERT OR REPLACE INTO benchmark_results
                 (run_id, benchmark_name, mode, total_queries, cache_hits, lightweight_count, capable_count,
-                 retry_count, avg_latency_sec, total_energy_kwh, total_emissions_kg, avg_grounding_score)
+                 retry_count, avg_latency_sec, total_energy_kwh, total_emissions_kg, avg_grounding_score, avg_quality_score)
                 VALUES (:run_id, :benchmark_name, :mode, :total_queries, :cache_hits, :lightweight_count, :capable_count,
-                        :retry_count, :avg_latency_sec, :total_energy_kwh, :total_emissions_kg, :avg_grounding_score)
+                        :retry_count, :avg_latency_sec, :total_energy_kwh, :total_emissions_kg, :avg_grounding_score, :avg_quality_score)
             """, result)
             conn.commit()
 

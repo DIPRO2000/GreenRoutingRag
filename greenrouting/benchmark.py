@@ -73,7 +73,23 @@ class BenchmarkRunner:
         self,
         queries: Optional[List[str]] = None,
         modes: Optional[List[str]] = None,
-        active_doc_id: Optional[str] = None
+        active_doc_id: Optional[str] = None,
+        include_answers: bool = False,
+    ) -> Dict[str, Any]:
+        """Run in a temporary semantic-cache state and restore user cache afterward."""
+        cache_store = self.orchestrator.semantic_cache.storage
+        cache_snapshot = cache_store.snapshot_cache_rows()
+        try:
+            return self._run_benchmark(queries, modes, active_doc_id, include_answers)
+        finally:
+            cache_store.restore_cache_rows(cache_snapshot)
+
+    def _run_benchmark(
+        self,
+        queries: Optional[List[str]] = None,
+        modes: Optional[List[str]] = None,
+        active_doc_id: Optional[str] = None,
+        include_answers: bool = False,
     ) -> Dict[str, Any]:
         """
         Execute full benchmark suite across specified modes using real queries and real measurements.
@@ -92,7 +108,7 @@ class BenchmarkRunner:
         for mode in test_modes:
             logger.info("Starting benchmark run for mode: %s", mode)
             # Clear cache between different mode benchmarks to ensure clean comparisons
-            self.orchestrator.semantic_cache.db.clear_all_cache()
+            self.orchestrator.semantic_cache.storage.clear_all_cache()
 
             total_energy_kwh = 0.0
             total_emissions_g = 0.0
@@ -128,12 +144,13 @@ class BenchmarkRunner:
                 else:
                     capable_count += 1
 
-                all_query_records.append({
+                query_record = {
                     "run_id": run_id,
                     "query_index": q_idx,
                     "query": q,
                     "mode": mode,
                     "model_used": res.get("model_used"),
+                    "is_simulated": bool(res.get("is_simulated", False)),
                     "cache_status": res.get("cache_status"),
                     "complexity_score": res.get("complexity_score"),
                     "latency_seconds": lat,
@@ -142,7 +159,11 @@ class BenchmarkRunner:
                     "grounding_score": res.get("grounding_score"),
                     "quality_score": res.get("quality_score"),
                     "retry_count": res.get("retry_count", 0)
-                })
+                }
+                if include_answers:
+                    query_record["answer"] = res.get("answer", "")
+                    query_record["cache_validation_reason"] = res.get("cache_validation_reason", "")
+                all_query_records.append(query_record)
 
             n = len(test_queries)
             avg_lat = sum(latencies) / n if n > 0 else 0.0

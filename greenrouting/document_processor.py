@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from pypdf import PdfReader
 
+MIN_PDF_PAGE_TEXT_CHARS = 80
+
 
 class DocumentProcessorError(Exception):
     """Custom exception for document processing errors."""
@@ -48,6 +50,14 @@ class DocumentProcessor:
 
     def extract_text_from_pdf(self, file_path_or_bytes: Any) -> Tuple[str, List[Tuple[int, str]]]:
         """Extract text from a PDF file with page tracking."""
+        full_text, pages_content, _, _ = self._extract_pdf_text_and_page_stats(file_path_or_bytes)
+        return full_text, pages_content
+
+    def _extract_pdf_text_and_page_stats(
+        self,
+        file_path_or_bytes: Any,
+    ) -> Tuple[str, List[Tuple[int, str]], int, List[int]]:
+        """Extract PDF text and identify pages with little or no selectable text."""
         try:
             if isinstance(file_path_or_bytes, (str, Path)):
                 reader = PdfReader(str(file_path_or_bytes))
@@ -60,19 +70,24 @@ class DocumentProcessor:
 
             pages_content: List[Tuple[int, str]] = []
             full_text_list: List[str] = []
+            low_text_pages: List[int] = []
 
             for idx, page in enumerate(reader.pages, start=1):
                 page_text = page.extract_text() or ""
                 cleaned = self._clean_text(page_text)
+                if len(cleaned) < MIN_PDF_PAGE_TEXT_CHARS:
+                    low_text_pages.append(idx)
                 if cleaned:
                     pages_content.append((idx, cleaned))
                     full_text_list.append(cleaned)
 
             full_text = "\n\n".join(full_text_list)
             if not full_text.strip():
-                raise DocumentProcessorError("PDF extracted text is empty (scanned image or empty pages).")
+                raise DocumentProcessorError(
+                    "PDF text extraction found no readable text. The file may be scanned or image-only; OCR is not available."
+                )
 
-            return full_text, pages_content
+            return full_text, pages_content, len(reader.pages), low_text_pages
         except Exception as e:
             if isinstance(e, DocumentProcessorError):
                 raise
@@ -155,10 +170,12 @@ class DocumentProcessor:
         ext = Path(file_name).suffix.lower()
         if ext == ".pdf":
             file_type = "PDF"
-            full_text, pages = self.extract_text_from_pdf(file_bytes)
+            full_text, pages, page_count, low_text_pages = self._extract_pdf_text_and_page_stats(file_bytes)
         elif ext in [".txt", ".md"]:
             file_type = "TXT"
             full_text, pages = self.extract_text_from_txt(file_bytes)
+            page_count = None
+            low_text_pages = []
         else:
             raise DocumentProcessorError(f"Unsupported file extension: '{ext}'. GreenRouting supports .pdf and .txt files.")
 
@@ -176,7 +193,9 @@ class DocumentProcessor:
             "doc_hash": doc_hash,
             "file_type": file_type,
             "total_chunks": len(chunks),
-            "total_characters": len(full_text)
+            "total_characters": len(full_text),
+            "page_count": page_count,
+            "low_text_pages": low_text_pages,
         }
 
         return doc_meta, chunks
